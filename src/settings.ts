@@ -1,4 +1,4 @@
-import { App, Notice, PluginSettingTab, SecretComponent, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, SettingDefinitionItem } from "obsidian";
 import { TextKey, t } from "./i18n";
 import type R2V2Plugin from "./main";
 import { ConflictAction } from "./sync";
@@ -68,6 +68,8 @@ export function missingSettings(s: R2V2Settings, secrets: ResolvedSecrets): Requ
   return missing;
 }
 
+type SettingsKey = keyof R2V2Settings;
+
 export class R2V2SettingTab extends PluginSettingTab {
   constructor(
     app: App,
@@ -76,151 +78,158 @@ export class R2V2SettingTab extends PluginSettingTab {
     super(app, plugin);
   }
 
-  display(): void {
-    const { containerEl } = this;
-    const s = this.plugin.settings;
-    containerEl.empty();
+  /** Controls write straight into the plugin's settings; saving also re-arms the sync timers. */
+  async setControlValue(key: string, value: unknown): Promise<void> {
+    (this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
+    await this.plugin.saveSettings();
+  }
 
-    const text = (
-      name: string,
-      desc: string,
-      key: "endpoint" | "accessKeyId" | "bucket" | "prefix",
-      opts: { placeholder?: string } = {},
-    ) =>
-      new Setting(containerEl)
-        .setName(name)
-        .setDesc(desc)
-        .addText((t) => {
-          t.setPlaceholder(opts.placeholder ?? "")
-            .setValue(s[key])
-            .onChange(async (v) => {
-              s[key] = v.trim();
-              await this.plugin.saveSettings();
-            });
-        });
-
-    // The value goes into Obsidian's secret storage; the settings only keep its name.
-    const secret = (name: string, desc: string, key: "secretAccessKeySecret" | "passwordSecret") =>
-      new Setting(containerEl)
-        .setName(name)
-        .setDesc(desc)
-        .addComponent((el) =>
-          new SecretComponent(this.app, el).setValue(s[key]).onChange(async (v) => {
-            s[key] = v ?? "";
-            await this.plugin.saveSettings();
-          }),
-        );
-
-    const num = (
-      name: string,
-      desc: string,
-      key: "intervalMinutes" | "syncOnSaveSeconds" | "protectPercent" | "maxFileSizeMB" | "concurrency",
-      min: number,
-      max: number,
-    ) =>
-      new Setting(containerEl)
-        .setName(name)
-        .setDesc(desc)
-        .addText((t) => {
-          t.inputEl.type = "number";
-          t.setValue(String(s[key])).onChange(async (v) => {
-            const n = Number(v);
-            if (!Number.isFinite(n)) return;
-            s[key] = Math.min(max, Math.max(min, Math.floor(n)));
-            await this.plugin.saveSettings();
-          });
-        });
-
-    new Setting(containerEl).setName("Cloudflare R2").setHeading();
-    text(t("field_endpoint"), t("desc_endpoint"), "endpoint", {
-      placeholder: "0123456789abcdef…",
-    });
-    text(t("field_accessKeyId"), t("desc_accessKeyId"), "accessKeyId");
-    secret(t("field_secretAccessKey"), t("desc_secretAccessKey"), "secretAccessKeySecret");
-    text(t("field_bucket"), t("desc_bucket"), "bucket");
-    text(t("field_prefix"), t("desc_prefix"), "prefix", {
-      placeholder: "my-vault",
-    });
-    new Setting(containerEl)
-      .setName(t("test_name"))
-      .setDesc(t("test_desc"))
-      .addButton((b) =>
-        b.setButtonText(t("test_button")).onClick(async () => {
-          b.setDisabled(true);
-          try {
-            new Notice(await this.plugin.testConnection());
-          } catch (e) {
-            new Notice(t("test_failed", { message: e instanceof Error ? e.message : String(e) }), 10000);
-          } finally {
-            b.setDisabled(false);
-          }
-        }),
-      );
-
-    new Setting(containerEl).setName(t("heading_encryption")).setHeading();
-    secret(t("field_password"), t("desc_password"), "passwordSecret");
-
-    new Setting(containerEl).setName(t("heading_timing")).setHeading();
-    new Setting(containerEl)
-      .setName(t("startup_name"))
-      .setDesc(t("startup_desc"))
-      .addToggle((t) =>
-        t.setValue(s.syncOnStartup).onChange(async (v) => {
-          s.syncOnStartup = v;
-          await this.plugin.saveSettings();
-        }),
-      );
-    num(t("interval_name"), t("interval_desc"), "intervalMinutes", 0, 1440);
-    num(t("onsave_name"), t("onsave_desc"), "syncOnSaveSeconds", 0, 3600);
-
-    new Setting(containerEl).setName(t("heading_behavior")).setHeading();
-    new Setting(containerEl)
-      .setName(t("conflict_name"))
-      .setDesc(t("conflict_desc"))
-      .addDropdown((d) =>
-        d
-          .addOption("keep_both", t("conflict_keep_both"))
-          .addOption("keep_newer", t("conflict_keep_newer"))
-          .setValue(s.conflictAction)
-          .onChange(async (v) => {
-            s.conflictAction = v as ConflictAction;
-            await this.plugin.saveSettings();
-          }),
-      );
-    num(t("protect_name"), t("protect_desc"), "protectPercent", 1, 100);
-    new Setting(containerEl)
-      .setName(t("config_name"))
-      .setDesc(t("config_desc", { dir: this.app.vault.configDir }))
-      .addToggle((t) =>
-        t.setValue(s.syncConfigDir).onChange(async (v) => {
-          s.syncConfigDir = v;
-          await this.plugin.saveSettings();
-        }),
-      );
-    new Setting(containerEl)
-      .setName(t("ignore_name"))
-      .setDesc(t("ignore_desc"))
-      .addTextArea((t) => {
-        t.inputEl.rows = 4;
-        t.setPlaceholder("private\n**/*.tmp")
-          .setValue(s.ignorePaths)
-          .onChange(async (v) => {
-            s.ignorePaths = v;
-            await this.plugin.saveSettings();
-          });
-      });
-    num(t("maxsize_name"), t("maxsize_desc"), "maxFileSizeMB", 0, 5000);
-    num(t("concurrency_name"), t("concurrency_desc"), "concurrency", 1, 16);
-
-    new Setting(containerEl).setName(t("heading_maintenance")).setHeading();
-    new Setting(containerEl)
-      .setName(t("reset_name"))
-      .setDesc(t("reset_desc"))
-      .addButton((b) =>
-        b.setButtonText(t("reset_button")).onClick(async () => {
-          await this.plugin.resetState();
-          new Notice(t("reset_done"));
-        }),
-      );
+  getSettingDefinitions(): SettingDefinitionItem<SettingsKey>[] {
+    return [
+      {
+        type: "group",
+        heading: "Cloudflare R2",
+        items: [
+          {
+            name: t("field_endpoint"),
+            desc: t("desc_endpoint"),
+            control: { type: "text", key: "endpoint", placeholder: "0123456789abcdef…" },
+          },
+          {
+            name: t("field_accessKeyId"),
+            desc: t("desc_accessKeyId"),
+            control: { type: "text", key: "accessKeyId" },
+          },
+          {
+            name: t("field_secretAccessKey"),
+            desc: t("desc_secretAccessKey"),
+            control: { type: "secret", key: "secretAccessKeySecret" },
+          },
+          {
+            name: t("field_bucket"),
+            desc: t("desc_bucket"),
+            control: { type: "text", key: "bucket" },
+          },
+          {
+            name: t("field_prefix"),
+            desc: t("desc_prefix"),
+            control: { type: "text", key: "prefix", placeholder: "my-vault" },
+          },
+          {
+            name: t("test_name"),
+            desc: t("test_desc"),
+            render: (setting) => {
+              setting.addButton((button) =>
+                button.setButtonText(t("test_button")).onClick(async () => {
+                  button.setDisabled(true);
+                  try {
+                    new Notice(await this.plugin.testConnection());
+                  } catch (e) {
+                    const message = e instanceof Error ? e.message : String(e);
+                    new Notice(t("test_failed", { message }), 10000);
+                  } finally {
+                    button.setDisabled(false);
+                  }
+                }),
+              );
+            },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: t("heading_encryption"),
+        items: [
+          {
+            name: t("field_password"),
+            desc: t("desc_password"),
+            control: { type: "secret", key: "passwordSecret" },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: t("heading_timing"),
+        items: [
+          {
+            name: t("startup_name"),
+            desc: t("startup_desc"),
+            control: { type: "toggle", key: "syncOnStartup" },
+          },
+          {
+            name: t("interval_name"),
+            desc: t("interval_desc"),
+            control: { type: "number", key: "intervalMinutes", min: 0, max: 1440, step: 1 },
+          },
+          {
+            name: t("onsave_name"),
+            desc: t("onsave_desc"),
+            control: { type: "number", key: "syncOnSaveSeconds", min: 0, max: 3600, step: 1 },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: t("heading_behavior"),
+        items: [
+          {
+            name: t("conflict_name"),
+            desc: t("conflict_desc"),
+            control: {
+              type: "dropdown",
+              key: "conflictAction",
+              defaultValue: "keep_both",
+              options: {
+                keep_both: t("conflict_keep_both"),
+                keep_newer: t("conflict_keep_newer"),
+              },
+            },
+          },
+          {
+            name: t("protect_name"),
+            desc: t("protect_desc"),
+            control: { type: "number", key: "protectPercent", min: 1, max: 100, step: 1 },
+          },
+          {
+            name: t("config_name"),
+            desc: t("config_desc", { dir: this.app.vault.configDir }),
+            control: { type: "toggle", key: "syncConfigDir" },
+          },
+          {
+            name: t("ignore_name"),
+            desc: t("ignore_desc"),
+            control: { type: "textarea", key: "ignorePaths", rows: 4, placeholder: "private\n**/*.tmp" },
+          },
+          {
+            name: t("maxsize_name"),
+            desc: t("maxsize_desc"),
+            control: { type: "number", key: "maxFileSizeMB", min: 0, max: 5000, step: 1 },
+          },
+          {
+            name: t("concurrency_name"),
+            desc: t("concurrency_desc"),
+            control: { type: "number", key: "concurrency", min: 1, max: 16, step: 1 },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: t("heading_maintenance"),
+        items: [
+          {
+            name: t("reset_name"),
+            desc: t("reset_desc"),
+            render: (setting) => {
+              setting.addButton((button) =>
+                button.setButtonText(t("reset_button")).onClick(async () => {
+                  await this.plugin.resetState();
+                  new Notice(t("reset_done"));
+                }),
+              );
+            },
+          },
+        ],
+      },
+    ];
   }
 }

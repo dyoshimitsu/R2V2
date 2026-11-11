@@ -9,7 +9,7 @@ The name stands for "R2 Vault to Vault", and is read the way R2-D2 is. The plugi
 - **Account required**: you need your own Cloudflare account with an R2 bucket and an API token. R2 has a free tier; usage beyond it is billed by Cloudflare.
 - **Network use**: the plugin talks only to the S3 API endpoint of your R2 account (`https://<account-id>.r2.cloudflarestorage.com`, or the endpoint you enter) to list, upload, download and delete the encrypted copies of your files. It contacts no other service.
 - **No telemetry**, no ads, and no access to files outside the vault.
-- **Desktop only** (Linux and macOS), Obsidian 1.11.4 or later. The interface follows Obsidian's language setting and is available in English and Japanese.
+- **Desktop only** (Linux and macOS), Obsidian 1.13.2 or later. The interface follows Obsidian's language setting and is available in English and Japanese.
 
 ## What the bucket can see
 
@@ -144,7 +144,7 @@ When a single sync would overwrite or delete more than a set share of the synced
 ```sh
 npm run dev       # watch build
 npm run build     # production build
-npm run check     # type check, format check, unit tests
+npm run check     # type check, lint, format check, unit tests
 npm run test:s3   # integration tests (needs Docker)
 npm run format    # format with Prettier
 ```
@@ -185,7 +185,7 @@ The tests write only under a random prefix and remove what they wrote. Even so, 
 
 On every push to `master` and every pull request, GitHub Actions runs:
 
-- the type check, format check, unit tests and build, on Ubuntu and macOS. The built `main.js` and `manifest.json` can be downloaded from the run page as the `artoo-veetoo` artifact
+- the type check, lint, format check, unit tests and build, on Ubuntu and macOS. The built `main.js` and `manifest.json` can be downloaded from the run page as the `artoo-veetoo` artifact
 - the integration tests against SeaweedFS
 - the integration tests against R2, only when the repository variable `R2V2_TEST_BUCKET` and the secrets `R2V2_TEST_ACCOUNT_ID`, `R2V2_TEST_ACCESS_KEY_ID` and `R2V2_TEST_SECRET_ACCESS_KEY` are set
 

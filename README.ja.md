@@ -8,7 +8,7 @@ R2V2 は、この三つを同時に満たすための Obsidian プラグイン�
 
 名前は「R2 Vault to Vault」から来ている。R2 を挟んで、vault から vault へ。読みは R2-D2 のもじりで、プラグインの ID `artoo-veetoo` もそこから取った(ID に数字が使えないためである)。
 
-デスクトップ専用(Linux / macOS)。Obsidian 1.11.4 以降が必要である。画面の言語は Obsidian の表示言語に従い、日本語と英語に対応している。
+デスクトップ専用(Linux / macOS)。Obsidian 1.13.2 以降が必要である。画面の言語は Obsidian の表示言語に従い、日本語と英語に対応している。
 
 ## バケットには何が見えるか
 
@@ -143,7 +143,7 @@ R2V2 は端末ごとに、前回の同期が済んだ時点の記録(ローカ�
 ```sh
 npm run dev       # 監視ビルド
 npm run build     # 本番ビルド
-npm run check     # 型チェック、整形の確認、単体テスト
+npm run check     # 型チェック、lint、整形の確認、単体テスト
 npm run test:s3   # 結合テスト(Docker が必要)
 npm run format    # Prettier で整形
 ```
@@ -184,7 +184,7 @@ npm run test:integration
 
 `master` への push と PR ごとに、GitHub Actions が次を走らせる。
 
-- 型チェック、整形の確認、単体テスト、ビルド(Ubuntu と macOS)。ビルドした `main.js` と `manifest.json` は、実行結果のページから `artoo-veetoo` という成果物として取得できる
+- 型チェック、lint、整形の確認、単体テスト、ビルド(Ubuntu と macOS)。ビルドした `main.js` と `manifest.json` は、実行結果のページから `artoo-veetoo` という成果物として取得できる
 - SeaweedFS に対する結合テスト
 - R2 に対する結合テスト。リポジトリの変数 `R2V2_TEST_BUCKET` と、シークレット `R2V2_TEST_ACCOUNT_ID`、`R2V2_TEST_ACCESS_KEY_ID`、`R2V2_TEST_SECRET_ACCESS_KEY` を設定したときだけ動く
 

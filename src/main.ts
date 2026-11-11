@@ -38,10 +38,10 @@ export default class R2V2Plugin extends Plugin {
 
   async onload(): Promise<void> {
     setLanguage(getLanguage());
-    const data: Record<string, unknown> = (await this.loadData()) ?? {};
+    const data = ((await this.loadData()) ?? {}) as Record<string, unknown>;
     // Earlier versions kept the secret key and password in data.json itself.
     const migrated = migrateSecrets(data, this.app.secretStorage);
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    this.settings = { ...DEFAULT_SETTINGS, ...(data as Partial<R2V2Settings>) };
     if (migrated) await this.saveData(this.settings);
 
     this.statusEl = this.addStatusBarItem();

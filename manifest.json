@@ -2,7 +2,7 @@
   "id": "artoo-veetoo",
   "name": "R2V2",
   "version": "0.1.2",
-  "minAppVersion": "1.11.4",
+  "minAppVersion": "1.13.2",
   "description": "Sync your vault between desktops through Cloudflare R2, with end-to-end encryption of file contents and names.",
   "author": "dyoshimitsu",
   "authorUrl": "https://github.com/dyoshimitsu",
