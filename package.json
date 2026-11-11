@@ -1,6 +1,6 @@
 {
   "name": "r2v2",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "private": true,
   "description": "Obsidian plugin: sync a vault between desktops through Cloudflare R2",
   "license": "MIT",
