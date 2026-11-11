@@ -128,6 +128,18 @@ test("conditional writes refuse to overwrite what changed", { skip }, async () =
   assert.equal((await s.get("k"))!.etag, e2);
 });
 
+test("a guarded delete leaves alone what changed since it was last seen", { skip }, async () => {
+  const s = store("guarded-delete");
+  const seen = await s.put("k", utf8("one"), {});
+  const current = await s.put("k", utf8("two"), {});
+  await assert.rejects(() => s.delete("k", { ifMatch: seen }), PreconditionFailedError);
+  assert.equal(str((await s.get("k"))!.data), "two");
+
+  await s.delete("k", { ifMatch: current });
+  assert.equal(await s.get("k"), null);
+  await s.delete("k", { ifMatch: current }); // already gone: nothing to do
+});
+
 test("listing follows pagination and stays inside its prefix", { skip }, async () => {
   const s = store("paging", { pageSize: 2 });
   for (let i = 0; i < 5; i++) await s.put(`data/${i}`, utf8(`${i}`), {});

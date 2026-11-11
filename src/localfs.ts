@@ -57,6 +57,19 @@ export class VaultFs implements LocalFs {
     return out;
   }
 
+  /** Probe once whether this file system folds letter case (macOS and Windows by default). */
+  private caseProbe: Promise<boolean> | null = null;
+
+  caseInsensitive(): Promise<boolean> {
+    this.caseProbe ??= (async () => {
+      const dir = this.app.vault.configDir;
+      const variant = dir === dir.toUpperCase() ? dir.toLowerCase() : dir.toUpperCase();
+      if (variant === dir) return false; // no letters to vary; assume the stricter case
+      return this.app.vault.adapter.exists(variant);
+    })();
+    return this.caseProbe;
+  }
+
   async stat(path: string): Promise<LocalEntry | null> {
     const st = await this.app.vault.adapter.stat(this.real(path));
     return st?.type === "file" ? { mtime: st.mtime, size: st.size } : null;
@@ -127,6 +140,9 @@ export class VaultFs implements LocalFs {
 
   async rename(from: string, to: string): Promise<void> {
     const target = this.real(from);
+    if (await this.app.vault.adapter.exists(normalizePath(to))) {
+      throw new Error(t("err_rename_exists", { path: to })); // never replace an existing file
+    }
     const file = this.app.vault.getFileByPath(target);
     // Vault.rename, not FileManager.renameFile: links must keep pointing at the original path.
     if (file) await this.app.vault.rename(file, normalizePath(to));

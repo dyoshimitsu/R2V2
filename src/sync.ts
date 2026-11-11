@@ -1,10 +1,13 @@
 // The sync engine. It only talks to the two interfaces below, so it runs
 // unchanged against Obsidian + R2 in the plugin and against in-memory fakes
 // in tests.
-import { sameBytes } from "./bytes";
+import { contentHash, sameBytes } from "./bytes";
+import { t } from "./i18n";
 export interface LocalEntry {
   mtime: number;
   size: number;
+  /** The content differs from the base although mtime and size do not show it. */
+  dirty?: boolean;
 }
 
 export interface RemoteEntry {
@@ -17,6 +20,10 @@ export interface BaseEntry {
   mtime: number;
   size: number;
   etag: string;
+  /** SHA-256 of the content that was synced. Absent in records written by 0.1.x. */
+  hash?: string;
+  /** When this entry was recorded or last verified (ms since the epoch). */
+  syncedAt?: number;
 }
 
 export interface SyncState {
@@ -32,7 +39,10 @@ export interface LocalFs {
   /** Create or overwrite; returns the resulting stat. */
   write(path: string, data: ArrayBuffer, mtime?: number): Promise<LocalEntry>;
   trash(path: string): Promise<void>;
+  /** Must fail rather than replace a file that already exists at `to`. */
   rename(from: string, to: string): Promise<void>;
+  /** True when names differing only in letter case refer to the same file (macOS, Windows). */
+  caseInsensitive?(): Promise<boolean>;
 }
 
 export interface PutOptions {
@@ -48,7 +58,11 @@ export interface Remote {
   get(key: string): Promise<{ data: ArrayBuffer; etag: string; mtime?: number }>;
   /** Returns the new ETag. Throws PreconditionFailedError on a lost race. */
   put(key: string, data: ArrayBuffer, opts: PutOptions): Promise<string>;
-  delete(key: string): Promise<void>;
+  /**
+   * Delete, but only if the object still has `expectedEtag` when given.
+   * Throws PreconditionFailedError if it changed in the meantime.
+   */
+  delete(key: string, expectedEtag?: string): Promise<void>;
 }
 
 export class PreconditionFailedError extends Error {
@@ -82,7 +96,7 @@ export function planSync(
     const l = local.get(key);
     const r = remote.get(key);
     const b: BaseEntry | undefined = base[key];
-    const localChanged = l ? !b || l.mtime !== b.mtime || l.size !== b.size : !!b;
+    const localChanged = l ? !b || !!l.dirty || l.mtime !== b.mtime || l.size !== b.size : !!b;
     const remoteChanged = r ? !b || r.etag !== b.etag : !!b;
 
     let type: ActionType | null = null;
@@ -128,6 +142,30 @@ export function assessRisk(actions: Action[], total: number): Risk {
   return { changes: deletions + overwrites, deletions, total };
 }
 
+/**
+ * One whole side has nothing left while the record says it held files. That is
+ * far more often an unmounted folder, an emptied bucket or a wrong prefix than
+ * a real decision to delete everything, so it always needs confirmation.
+ * Removing the last file or two of a tiny vault is legitimate and looks the
+ * same, hence the minimum of three.
+ */
+export function looksWiped(actions: Action[], localCount: number, remoteCount: number): boolean {
+  const count = (type: ActionType) => actions.filter((a) => a.type === type).length;
+  return (remoteCount === 0 && count("deleteLocal") >= 3) || (localCount === 0 && count("deleteRemote") >= 3);
+}
+
+/**
+ * A file whose recorded mtime is this close to the moment it was recorded may
+ * have been modified again without its mtime or size showing it (the "racy
+ * git" problem). Such entries are verified by content instead of by stat.
+ */
+const RACY_MS = 3000;
+
+/** Save progress this often during a long pass, so an interruption loses little. */
+const CHECKPOINT_EVERY = 25;
+
+const foldCase = (key: string) => key.normalize("NFC").toLowerCase();
+
 export interface SyncSummary {
   uploaded: number;
   downloaded: number;
@@ -151,13 +189,15 @@ export interface SyncOptions {
   protectPercent?: number;
   confirmLargeChange?: (risk: Risk) => Promise<boolean>;
   onProgress?: (done: number, total: number) => void;
+  /** Called now and then during a long pass; persist `state` here. */
+  onCheckpoint?: () => Promise<void>;
   concurrency?: number;
   now?: () => Date;
 }
 
 export type ConflictAction = "keep_both" | "keep_newer";
 
-export function conflictPath(path: string, now: Date): string {
+export function conflictPath(path: string, now: Date, attempt = 1): string {
   const p = (n: number) => String(n).padStart(2, "0");
   const stamp =
     `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}` +
@@ -167,7 +207,7 @@ export function conflictPath(path: string, now: Date): string {
   const hasExt = dot > slash + 1;
   const stem = hasExt ? path.slice(0, dot) : path;
   const ext = hasExt ? path.slice(dot) : "";
-  return `${stem} (conflict ${stamp})${ext}`;
+  return `${stem} (conflict ${stamp}${attempt > 1 ? `-${attempt}` : ""})${ext}`;
 }
 
 const sameStat = (a: LocalEntry | null | undefined, b: LocalEntry | null | undefined) =>
@@ -199,6 +239,23 @@ export async function runSync(
   const excluded = new Set<string>();
   for (const [k, v] of localAll) if (!include(k, v.size)) excluded.add(k);
   for (const [k, v] of remoteAll) if (!include(k, v.size)) excluded.add(k);
+
+  // On a case-insensitive file system "Note.md" and "note.md" are one file.
+  // Downloading both would overwrite one with the other, and the missing one
+  // would then look deleted and be removed everywhere. Leave such names alone.
+  if (await local.caseInsensitive?.()) {
+    const byFolded = new Map<string, string[]>();
+    for (const k of remoteAll.keys()) byFolded.set(foldCase(k), [...(byFolded.get(foldCase(k)) ?? []), k]);
+    for (const [folded, keys] of byFolded) {
+      if (keys.length < 2) continue;
+      for (const k of keys) {
+        excluded.add(k);
+        const others = keys.filter((o) => o !== k).join(", ");
+        summary.errors.push({ key: k, message: t("err_case_collision", { others }) });
+      }
+      for (const k of localAll.keys()) if (foldCase(k) === folded) excluded.add(k);
+    }
+  }
   const localMap = new Map([...localAll].filter(([k]) => !excluded.has(k)));
   const remoteMap = new Map([...remoteAll].filter(([k]) => !excluded.has(k)));
   const base: Record<string, BaseEntry> = {};
@@ -206,10 +263,35 @@ export async function runSync(
     if (!excluded.has(k) && include(k, v.size)) base[k] = v;
   }
 
+  // Decide by content where mtime and size cannot be trusted: a file touched
+  // without being changed is not an edit, and an edit that left mtime and size
+  // as they were must not be missed.
+  for (const [key, l] of localMap) {
+    const b = base[key];
+    if (!b?.hash) continue;
+    const statSame = l.mtime === b.mtime && l.size === b.size;
+    const racy = b.syncedAt === undefined || b.mtime > b.syncedAt - RACY_MS;
+    if (statSame ? !racy : l.size !== b.size) continue;
+    let unchanged: boolean;
+    try {
+      unchanged = contentHash(await local.read(key)) === b.hash;
+    } catch {
+      continue; // unreadable right now; the stat comparison stands
+    }
+    if (unchanged) {
+      const verified = { ...b, mtime: l.mtime, size: l.size, syncedAt: now().getTime() };
+      state.files[key] = verified;
+      base[key] = verified;
+    } else if (statSame) {
+      localMap.set(key, { ...l, dirty: true });
+    }
+  }
+
   const actions = planSync(localMap, remoteMap, base);
 
   const risk = assessRisk(actions, Object.keys(base).length);
-  if (risk.changes > 10 && risk.changes > (risk.total * (opts.protectPercent ?? 50)) / 100) {
+  const large = risk.changes > 10 && risk.changes > (risk.total * (opts.protectPercent ?? 50)) / 100;
+  if (large || looksWiped(actions, localMap.size, remoteMap.size)) {
     const ok = opts.confirmLargeChange ? await opts.confirmLargeChange(risk) : false;
     if (!ok) {
       summary.aborted = true;
@@ -217,8 +299,15 @@ export async function runSync(
     }
   }
 
-  const record = (key: string, st: LocalEntry, etag: string) => {
-    state.files[key] = { mtime: st.mtime, size: st.size, etag };
+  /** Remember that `data`, seen locally as `st`, is what the remote holds under `etag`. */
+  const record = (key: string, st: LocalEntry, etag: string, data: ArrayBuffer) => {
+    state.files[key] = {
+      mtime: st.mtime,
+      size: st.size,
+      etag,
+      hash: contentHash(data),
+      syncedAt: now().getTime(),
+    };
   };
 
   /** Upload unless the remote moved since we looked; the next pass then sees a conflict. */
@@ -229,11 +318,35 @@ export async function runSync(
         ifMatch: expected,
         ifNoneMatch: !expected,
       });
-      record(key, st, etag);
+      // The size is that of the bytes actually sent: if the file changed between
+      // the scan and the read, the next pass finds the same hash and moves on.
+      record(key, { mtime: st.mtime, size: data.byteLength }, etag, data);
       summary.uploaded++;
     } catch (e) {
       if (!(e instanceof PreconditionFailedError)) throw e;
       summary.skipped++;
+    }
+  };
+
+  /**
+   * A name for a conflict copy that nothing else has: not a file here, not an
+   * object on the remote (another device may have made a copy with the same
+   * name in the same second), and not one handed out earlier in this pass.
+   */
+  const reserved = new Set<string>();
+  const freeConflictPath = async (key: string): Promise<string> => {
+    const at = now();
+    for (let attempt = 1; ; attempt++) {
+      const candidate = conflictPath(key, at, attempt);
+      const taken =
+        reserved.has(candidate) ||
+        localAll.has(candidate) ||
+        remoteAll.has(candidate) ||
+        (await local.stat(candidate)) !== null;
+      if (!taken) {
+        reserved.add(candidate);
+        return candidate;
+      }
     }
   };
 
@@ -255,7 +368,7 @@ export async function runSync(
         }
         const obj = await remote.get(key);
         const st = await local.write(key, obj.data, obj.mtime);
-        record(key, st, obj.etag);
+        record(key, st, obj.etag, obj.data);
         summary.downloaded++;
         return;
       }
@@ -268,7 +381,7 @@ export async function runSync(
         }
         if (sameBytes(data, obj.data)) {
           // Both sides hold the same content (e.g. first sync of two copies).
-          record(key, a.local!, obj.etag);
+          record(key, a.local!, obj.etag, data);
           return;
         }
         if (opts.conflictAction === "keep_newer") {
@@ -276,16 +389,16 @@ export async function runSync(
             await upload(key, data, a.local!, obj.etag);
           } else {
             const st = await local.write(key, obj.data, obj.mtime);
-            record(key, st, obj.etag);
+            record(key, st, obj.etag, obj.data);
             summary.downloaded++;
           }
           return;
         }
         // Keep the local version under a new name; the remote one takes the path.
-        const copy = conflictPath(key, now());
+        const copy = await freeConflictPath(key);
         await local.rename(key, copy);
         const st = await local.write(key, obj.data, obj.mtime);
-        record(key, st, obj.etag);
+        record(key, st, obj.etag, obj.data);
         summary.conflicts.push(copy);
         return;
       }
@@ -302,7 +415,14 @@ export async function runSync(
       }
 
       case "deleteRemote":
-        await remote.delete(key);
+        try {
+          // Another device may have uploaded a new version since the listing.
+          await remote.delete(key, a.remote!.etag);
+        } catch (e) {
+          if (!(e instanceof PreconditionFailedError)) throw e;
+          summary.skipped++; // the next pass downloads that version instead
+          return;
+        }
         delete state.files[key];
         summary.deletedRemote++;
         return;
@@ -317,6 +437,7 @@ export async function runSync(
       summary.errors.push({ key: a.key, message: e instanceof Error ? e.message : String(e) });
     }
     opts.onProgress?.(++done, actions.length);
+    if (done % CHECKPOINT_EVERY === 0 && done < actions.length) await opts.onCheckpoint?.();
   });
 
   return summary;

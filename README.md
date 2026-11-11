@@ -113,6 +113,23 @@ A correct three-way comparison still produces a wrong result from wrong input, s
 
 When a single sync would overwrite or delete more than a set share of the synced files (50% by default), a confirmation dialog appears first. Cancelling changes nothing. Files deleted locally go to the trash, following Obsidian's "Deleted files" setting.
 
+### What the sync guarantees, and how that is checked
+
+The rules follow the specification of the [Unison](https://github.com/bcpierce00/unison) file synchronizer (Pierce and Vouillon, "What's in Unison?", 2004): never overwrite a change the user made, never propagate anything that is not a user's change, and bring both sides together wherever that is possible. In those terms:
+
+- A file counts as changed by its content, not by its timestamp. The record keeps a SHA-256 of what was synced, so a file that was only touched (copied, restored, checked out again) is not uploaded and cannot cause a false conflict.
+- Modification time and size are used as a shortcut, and that shortcut has a known hole: an edit made in the same instant as the sync, leaving time and size unchanged, would go unseen. Files synced within three seconds of their modification time are therefore compared by content on the next pass, the same remedy Git uses for its index.
+- Before a download overwrites a file, and before a local file is moved to the trash, the file is checked again against what the scan saw. If it changed in between, it is left alone until the next pass.
+- Uploads are conditional on the remote still being what the listing showed. R2's delete has no such condition, so a deletion looks at the object once more immediately before removing it.
+- A conflict copy never takes a name that is already in use, locally or on the remote.
+- When one whole side appears empty while the record says it held three or more files, the sync asks first. An unmounted folder or an emptied bucket looks exactly like "delete everything".
+- On a case-insensitive file system (the macOS default), names that differ only in letter case are not synced and are reported, instead of one silently replacing the other.
+- The record advances only for files that were actually synced, and is saved during long passes. An interrupted pass is finished by the next one without conflicts.
+
+Besides the tests for each of these, `tests/sync-safety.test.ts` runs random histories on three devices (edits, deletions and syncs in random order) and checks that the devices end up identical and that no edit is destroyed before it was either synced or replaced by its author. `R2V2_SEEDS=5000 npm test` widens the search.
+
+Where R2V2 deliberately differs from Unison: an edit on one side and a deletion on the other is not left as a conflict for the user. The edit wins, as it does in rclone bisync.
+
 ## Settings
 
 | Setting                | Default    | Notes                                                                                                  |
@@ -138,6 +155,9 @@ When a single sync would overwrite or delete more than a set share of the synced
 - Changing the password is not supported. To change it, sync again to a new prefix.
 - Files and folders whose names start with a dot are not synced, apart from the config folder.
 - There is no one-way sync mode.
+- An edit that keeps the file's size and modification time exactly, made more than a few seconds after the file was last synced, is not noticed. Ordinary editing always changes the modification time.
+- Deleting on one device while another uploads a new version of the same file can still lose that version if the upload lands in the instant between the last check and the delete. The other device keeps its copy until its next sync, where it goes to the trash.
+- Downloads are written in place, not to a temporary file first. If Obsidian is killed in the middle of a write, the next sync keeps the partial file as a conflict copy and restores the remote version.
 
 ## Development
 

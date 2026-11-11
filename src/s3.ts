@@ -154,7 +154,16 @@ export class R2Store implements RawStore {
     return stripEtag(etag);
   }
 
-  async delete(key: string): Promise<void> {
+  async delete(key: string, opts: { ifMatch?: string } = {}): Promise<void> {
+    if (opts.ifMatch) {
+      // R2's DeleteObject takes no conditions, so look first. This narrows the
+      // window in which another device's upload could be deleted from the whole
+      // length of a sync pass to the gap between these two requests.
+      const head = await this.request("HEAD", key, { allow404: true });
+      if (!head) return; // already gone
+      if (stripEtag(header(head.headers, "etag") ?? "") !== opts.ifMatch)
+        throw new PreconditionFailedError(key);
+    }
     await this.request("DELETE", key);
   }
 }

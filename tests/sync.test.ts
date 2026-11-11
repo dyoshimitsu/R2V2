@@ -50,6 +50,7 @@ test("conflict copy names", () => {
   assert.equal(conflictPath("a/b.md", d), "a/b (conflict 20261111-134500).md");
   assert.equal(conflictPath("a.b/noext", d), "a.b/noext (conflict 20261111-134500)");
   assert.equal(conflictPath(".hidden", d), ".hidden (conflict 20261111-134500)");
+  assert.equal(conflictPath("a/b.md", d, 2), "a/b (conflict 20261111-134500-2).md");
 });
 
 test("create, edit and delete propagate between two devices", async () => {

@@ -108,11 +108,14 @@ const en = {
   err_no_password: "The encryption password is not set",
   err_remote_missing: "Not found on the remote: {path}",
   err_write_unverified: "Could not verify the file after writing: {path}",
+  err_rename_exists: "A file already exists at {path}",
   err_kdf: "Key derivation parameters are out of range (r2v2.json on the remote may have been altered)",
   err_password_empty: "The encryption password is empty",
   err_salt_short: "The salt is too short",
   err_not_r2v2: "Not R2V2-encrypted data",
   err_decrypt: "Decryption failed (the data is corrupted or has been tampered with)",
+  err_case_collision:
+    "Not synced: this device cannot tell this name apart from {others}, which differs only in letter case",
 };
 
 export type TextKey = keyof typeof en;
@@ -222,11 +225,13 @@ const ja: Record<TextKey, string> = {
   err_no_password: "暗号化パスワードが設定されていません",
   err_remote_missing: "リモートにありません: {path}",
   err_write_unverified: "書き込み後に確認できません: {path}",
+  err_rename_exists: "{path} にはすでにファイルがあります",
   err_kdf: "鍵導出パラメータが許容範囲外です(リモートの r2v2.json が書き換えられた可能性があります)",
   err_password_empty: "暗号化パスワードが空です",
   err_salt_short: "ソルトが短すぎます",
   err_not_r2v2: "R2V2 形式の暗号化データではありません",
   err_decrypt: "復号に失敗しました(データが壊れているか、改ざんされています)",
+  err_case_collision: "同期しませんでした: この端末では、大文字と小文字だけが違う {others} と区別できません",
 };
 
 const languages: Record<string, Record<TextKey, string>> = { en, ja };

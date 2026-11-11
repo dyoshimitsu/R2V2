@@ -34,7 +34,8 @@ export interface RawStore {
   /** Resolves to null when the object does not exist. */
   get(key: string): Promise<{ data: ArrayBuffer; etag: string } | null>;
   put(key: string, data: ArrayBuffer, opts: { ifMatch?: string; ifNoneMatch?: boolean }): Promise<string>;
-  delete(key: string): Promise<void>;
+  /** With `ifMatch`, deletes only if the object still has that ETag (else PreconditionFailedError). */
+  delete(key: string, opts?: { ifMatch?: string }): Promise<void>;
 }
 
 /** Read the remote's key-derivation parameters; null if it was never initialised. */
@@ -52,6 +53,16 @@ export async function readMeta(store: RawStore): Promise<RemoteMeta | null> {
   }
   assertSaneKdf(meta.kdf);
   return meta;
+}
+
+/**
+ * A decrypted name is about to become a path in the vault. Only someone with
+ * the key could have produced it, but a path that climbs out of the vault or
+ * that Obsidian would rewrite is still never something to act on.
+ */
+export function isSafePath(path: string): boolean {
+  if (!path || path.startsWith("/") || path.includes("\\") || path.includes("\0")) return false;
+  return path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
 /** A Remote whose contents, paths and mtimes are encrypted before they leave. */
@@ -121,7 +132,7 @@ export class EncryptedRemote implements Remote {
     let foreign = 0;
     for (const [key, entry] of raw) {
       const path = this.cipher.decryptName(key.slice(DATA_PREFIX.length));
-      if (path === null) foreign++;
+      if (path === null || !isSafePath(path)) foreign++;
       else out.set(path, entry);
     }
     this.foreign = foreign;
@@ -149,7 +160,12 @@ export class EncryptedRemote implements Remote {
     }
   }
 
-  async delete(path: string): Promise<void> {
-    await this.store.delete(this.objectKey(path));
+  async delete(path: string, expectedEtag?: string): Promise<void> {
+    try {
+      await this.store.delete(this.objectKey(path), { ifMatch: expectedEtag });
+    } catch (e) {
+      if (e instanceof PreconditionFailedError) throw new PreconditionFailedError(path);
+      throw e;
+    }
   }
 }

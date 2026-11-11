@@ -5,6 +5,8 @@ import {
   LocalEntry,
   LocalFs,
   PreconditionFailedError,
+  PutOptions,
+  Remote,
   RemoteEntry,
   SyncOptions,
   SyncState,
@@ -50,7 +52,9 @@ export class MemoryStore implements RawStore {
     return etag;
   }
 
-  async delete(key: string): Promise<void> {
+  async delete(key: string, opts: { ifMatch?: string } = {}): Promise<void> {
+    const cur = this.objects.get(key);
+    if (opts.ifMatch && cur && cur.etag !== opts.ifMatch) throw new PreconditionFailedError(key);
     this.objects.delete(key);
   }
 }
@@ -59,6 +63,12 @@ export class MemoryStore implements RawStore {
 export class MemoryFs implements LocalFs {
   files = new Map<string, { data: ArrayBuffer; mtime: number }>();
   trashed: string[] = [];
+  /** Set to make this vault behave like one on a case-insensitive file system. */
+  foldsCase = false;
+
+  async caseInsensitive(): Promise<boolean> {
+    return this.foldsCase;
+  }
   private clock = 1_700_000_000_000;
 
   set(path: string, content: string): void {
@@ -107,6 +117,7 @@ export class MemoryFs implements LocalFs {
   async rename(from: string, to: string): Promise<void> {
     const f = this.files.get(from);
     if (!f) throw new Error(`ENOENT ${from}`);
+    if (this.files.has(to)) throw new Error(`EEXIST ${to}`);
     this.files.delete(from);
     this.files.set(to, f);
   }
@@ -134,3 +145,30 @@ export const pair = () => {
   const store = new MemoryStore();
   return { store, a: new Device(store), b: new Device(store) };
 };
+
+/** The bucket without the encryption layer: enough to exercise the sync engine quickly. */
+export class PlainRemote implements Remote {
+  private mtimes = new Map<string, number>();
+
+  constructor(readonly store: MemoryStore) {}
+
+  list() {
+    return this.store.list("");
+  }
+
+  async get(key: string) {
+    const obj = await this.store.get(key);
+    if (!obj) throw new Error(`not found: ${key}`);
+    return { ...obj, mtime: this.mtimes.get(key) };
+  }
+
+  async put(key: string, data: ArrayBuffer, opts: PutOptions): Promise<string> {
+    const etag = await this.store.put(key, data, opts);
+    if (opts.mtime) this.mtimes.set(key, opts.mtime);
+    return etag;
+  }
+
+  delete(key: string, expectedEtag?: string) {
+    return this.store.delete(key, { ifMatch: expectedEtag });
+  }
+}

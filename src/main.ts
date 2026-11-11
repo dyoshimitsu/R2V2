@@ -146,6 +146,21 @@ export default class R2V2Plugin extends Plugin {
     await this.app.vault.adapter.write(this.statePath(), JSON.stringify(state));
   }
 
+  private checkpointing = false;
+
+  /** Save progress during a long pass. Workers call this concurrently; one write at a time is enough. */
+  private async checkpoint(state: SyncState): Promise<void> {
+    if (this.checkpointing) return;
+    this.checkpointing = true;
+    try {
+      await this.saveState(state);
+    } catch (e) {
+      console.error("R2V2: could not save sync state", e); // reported to the user at the end of the pass
+    } finally {
+      this.checkpointing = false;
+    }
+  }
+
   async resetState(): Promise<void> {
     const adapter = this.app.vault.adapter;
     if (await adapter.exists(this.statePath())) await adapter.remove(this.statePath());
@@ -230,6 +245,7 @@ export default class R2V2Plugin extends Plugin {
         remote.id,
       ].join("|");
       state = await this.loadState(remoteId);
+      const remoteState = state;
       const local = new VaultFs(this.app, { syncConfigDir: s.syncConfigDir, alwaysSkip: this.alwaysSkip });
 
       const summary = await runSync(local, remote, state, {
@@ -238,6 +254,7 @@ export default class R2V2Plugin extends Plugin {
         protectPercent: s.protectPercent,
         concurrency: s.concurrency,
         onProgress: (done, total) => this.setStatus(t("status_progress", { done, total })),
+        onCheckpoint: () => this.checkpoint(remoteState),
         confirmLargeChange: ({ changes, deletions, total }) =>
           ConfirmModal.ask(
             this.app,
