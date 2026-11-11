@@ -1,0 +1,9 @@
+# Settings for running the integration tests against Cloudflare R2 itself
+# (npm run test:integration). Copy to .envrc, fill in, then `direnv allow`.
+# .envrc is git-ignored. Use a bucket that holds no real vault.
+
+# Cloudflare account ID (or a full S3 endpoint URL)
+export R2V2_TEST_ENDPOINT=""
+export R2V2_TEST_BUCKET=""
+export R2V2_TEST_ACCESS_KEY_ID=""
+export R2V2_TEST_SECRET_ACCESS_KEY=""

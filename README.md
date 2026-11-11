@@ -82,6 +82,8 @@ R2V2 が通信する相手は一つだけで、設定したアカウントの R2
    cp main.js manifest.json /path/to/vault/.obsidian/plugins/r2v2/
    ```
 
+   fish を使っているなら、ビルドとコピーを `scripts/install.fish /path/to/vault` でまとめて行える。
+
 3. Obsidian の「コミュニティプラグイン」で R2V2 を有効にし、設定画面でアカウント ID、アクセスキー ID、バケット名を入れる。シークレットアクセスキーと暗号化パスワードは、それぞれの欄で Obsidian のシークレットを新しく作って選ぶ。「接続テスト」で確かめられる。
 4. リボンの同期アイコンか、コマンド「R2V2: 今すぐ同期」で最初の同期を走らせる。
 5. もう一方の端末でも 2〜4 を行う。パスワードとプレフィックスは同じものにする。
@@ -180,6 +182,8 @@ R2V2_TEST_ACCESS_KEY_ID=<アクセスキー ID> \
 R2V2_TEST_SECRET_ACCESS_KEY=<シークレット> \
 npm run test:integration
 ```
+
+[direnv](https://direnv.net/) を使う場合は、`.envrc.example` を `.envrc` に写して値を入れればよい。`.envrc` は Git の管理外にしてある。
 
 テストはランダムなプレフィックスの下だけに書き込み、終わると消す。とはいえ、vault を置いているバケットとは別のものを使うのが安全である。
 

@@ -3,3 +3,4 @@ main.js
 data.json
 sync-state.json
 *.map
+.envrc
