@@ -1,14 +1,21 @@
-import { Notice, Plugin, debounce } from "obsidian";
+import { Notice, Plugin, debounce, requestUrl } from "obsidian";
 import { Cipher } from "./cipher";
 import { ConfirmModal } from "./confirm-modal";
 import { EncryptedRemote, readMeta } from "./encrypted-remote";
 import { compileIgnore } from "./ignore";
 import { VaultFs } from "./localfs";
-import { R2Store, normalizePrefix, resolveEndpoint } from "./s3";
+import { HttpClient, R2Store, normalizePrefix, resolveEndpoint } from "./s3";
 import { DEFAULT_SETTINGS, R2V2SettingTab, R2V2Settings, missingSettings } from "./settings";
 import { SyncState, SyncSummary, runSync } from "./sync";
 
 const STATE_FILE = "sync-state.json";
+
+/** Obsidian's requestUrl goes through the main process, so CORS does not apply. */
+const obsidianHttp: HttpClient = async ({ url, method, headers, body }) => {
+  const { "content-type": contentType, ...rest } = headers;
+  const res = await requestUrl({ url, method, headers: rest, body, contentType, throw: false });
+  return { status: res.status, headers: res.headers, body: res.arrayBuffer };
+};
 
 export default class R2V2Plugin extends Plugin {
   settings: R2V2Settings = DEFAULT_SETTINGS;
@@ -81,12 +88,15 @@ export default class R2V2Plugin extends Plugin {
 
   private store(): R2Store {
     const s = this.settings;
-    return new R2Store({
-      endpoint: s.endpoint,
-      bucket: s.bucket.trim(),
-      prefix: s.prefix,
-      credentials: { accessKeyId: s.accessKeyId.trim(), secretAccessKey: s.secretAccessKey.trim() },
-    });
+    return new R2Store(
+      {
+        endpoint: s.endpoint,
+        bucket: s.bucket.trim(),
+        prefix: s.prefix,
+        credentials: { accessKeyId: s.accessKeyId.trim(), secretAccessKey: s.secretAccessKey.trim() },
+      },
+      obsidianHttp,
+    );
   }
 
   private statePath(): string {

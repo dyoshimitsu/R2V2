@@ -2,7 +2,7 @@
 // the bucket underneath only ever holds ciphertext.
 import { randomBytes } from "crypto";
 import { utf8 } from "./bytes";
-import { Cipher, DEFAULT_KDF, KdfParams } from "./cipher";
+import { Cipher, DEFAULT_KDF, KdfParams, assertSaneKdf } from "./cipher";
 import { PreconditionFailedError, PutOptions, Remote, RemoteEntry } from "./sync";
 
 const CHECK_TEXT = "r2v2-password-check";
@@ -40,10 +40,16 @@ export interface RawStore {
 export async function readMeta(store: RawStore): Promise<RemoteMeta | null> {
   const existing = await store.get(META_KEY);
   if (!existing) return null;
-  const meta = JSON.parse(Buffer.from(existing.data).toString("utf8")) as RemoteMeta;
-  if (meta.version !== 1 || meta.kdf?.name !== "scrypt" || !meta.salt || !meta.check) {
+  let meta: RemoteMeta;
+  try {
+    meta = JSON.parse(Buffer.from(existing.data).toString("utf8")) as RemoteMeta;
+  } catch {
+    throw new Error(`${META_KEY} を読めません`);
+  }
+  if (meta?.version !== 1 || typeof meta.salt !== "string" || typeof meta.check !== "string") {
     throw new Error(`${META_KEY} の形式を解釈できません(より新しい版で作られた可能性があります)`);
   }
+  assertSaneKdf(meta.kdf);
   return meta;
 }
 

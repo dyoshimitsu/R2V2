@@ -1,6 +1,7 @@
-// R2 client built on Obsidian's requestUrl (which is not subject to CORS).
-// It only ever sees ciphertext: encryption happens one layer up, in encrypted-remote.ts.
-import { requestUrl } from "obsidian";
+// Client for R2's S3 API. It only ever sees ciphertext: encryption happens one
+// layer up, in encrypted-remote.ts. The HTTP transport is passed in, so the
+// plugin can use Obsidian's requestUrl (not subject to CORS) and tests can use
+// fetch against a real S3-compatible server.
 import { RawStore } from "./encrypted-remote";
 import { parseErrorXml, parseListXml, stripEtag } from "./s3xml";
 import { Credentials, canonicalQuery, encodeKeyPath, sha256Hex, signRequest } from "./sigv4";
@@ -13,7 +14,27 @@ export interface R2Config {
   /** Key prefix inside the bucket ("" for the bucket root). */
   prefix: string;
   credentials: Credentials;
+  /** Signing region. R2 uses "auto"; other S3-compatible servers may differ. */
+  region?: string;
+  /** Objects per list request (the server default is 1000). */
+  pageSize?: number;
 }
+
+export interface HttpRequest {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: ArrayBuffer;
+}
+
+export interface HttpResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: ArrayBuffer;
+}
+
+/** Performs one request and resolves for any HTTP status. */
+export type HttpClient = (req: HttpRequest) => Promise<HttpResponse>;
 
 export function resolveEndpoint(endpoint: string): string {
   const e = endpoint.trim().replace(/\/+$/, "");
@@ -28,6 +49,8 @@ export function normalizePrefix(prefix: string): string {
 
 const EMPTY_HASH = sha256Hex("");
 
+const text = (res: HttpResponse) => Buffer.from(res.body).toString("utf8");
+
 function header(headers: Record<string, string>, name: string): string | undefined {
   for (const k of Object.keys(headers)) {
     if (k.toLowerCase() === name) return headers[k];
@@ -39,7 +62,10 @@ export class R2Store implements RawStore {
   private readonly base: URL;
   private readonly prefix: string;
 
-  constructor(private readonly config: R2Config) {
+  constructor(
+    private readonly config: R2Config,
+    private readonly http: HttpClient,
+  ) {
     this.base = new URL(resolveEndpoint(config.endpoint));
     this.prefix = normalizePrefix(config.prefix);
   }
@@ -65,25 +91,19 @@ export class R2Store implements RawStore {
       query,
       payloadHash,
       credentials: this.config.credentials,
-      region: "auto",
+      region: this.config.region ?? "auto",
     });
-    const res = await requestUrl({
+    if (opts.body) headers["content-type"] = "application/octet-stream";
+    const res = await this.http({
       url: `${this.base.origin}${path}${query ? "?" + query : ""}`,
       method,
       headers: { ...headers, ...opts.unsigned },
       body: opts.body,
-      contentType: opts.body ? "application/octet-stream" : undefined,
-      throw: false,
     });
     if (res.status === 412 && key !== null) throw new PreconditionFailedError(key);
     if (res.status === 404 && opts.allow404) return null;
     if (res.status >= 300) {
-      let detail = "";
-      try {
-        detail = parseErrorXml(res.text);
-      } catch {
-        // body was not text
-      }
+      const detail = parseErrorXml(text(res));
       throw new Error(`R2 ${method} failed: HTTP ${res.status}${detail ? ` ${detail}` : ""}`);
     }
     return res;
@@ -96,9 +116,10 @@ export class R2Store implements RawStore {
     do {
       const query: Record<string, string> = { "list-type": "2" };
       if (full) query["prefix"] = full;
+      if (this.config.pageSize) query["max-keys"] = String(this.config.pageSize);
       if (token) query["continuation-token"] = token;
       const res = await this.request("GET", null, { query });
-      const page = parseListXml(res!.text);
+      const page = parseListXml(text(res!));
       for (const o of page.objects) {
         if (!o.key.startsWith(full)) continue;
         out.set(o.key.slice(this.prefix.length), { etag: o.etag, size: o.size });
@@ -116,7 +137,7 @@ export class R2Store implements RawStore {
   async get(key: string) {
     const res = await this.request("GET", key, { allow404: true });
     if (!res) return null;
-    return { data: res.arrayBuffer, etag: stripEtag(header(res.headers, "etag") ?? "") };
+    return { data: res.body, etag: stripEtag(header(res.headers, "etag") ?? "") };
   }
 
   async put(

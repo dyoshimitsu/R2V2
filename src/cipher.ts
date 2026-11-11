@@ -3,7 +3,9 @@
 //
 //   key derivation : scrypt(password, salt) -> content key | name key | name MAC key
 //   content        : "R2V2" 0x01 | nonce(12) | AES-256-GCM(mtime(8) | data) | tag(16)
-//                    with the encrypted object name as associated data
+//                    associated data = "R2V2" 0x01 | encrypted object name, so a
+//                    ciphertext is only valid in the format version and under the
+//                    object name it was written for
 //   names          : base64url( siv(12) | AES-256-GCM(path) | tag(16) ),
 //                    siv = HMAC-SHA256(name MAC key, path)[0..12]  (deterministic)
 import { createCipheriv, createDecipheriv, createHmac, randomBytes, scrypt, timingSafeEqual } from "crypto";
@@ -20,7 +22,40 @@ export interface KdfParams {
   p: number;
 }
 
-export const DEFAULT_KDF: KdfParams = { name: "scrypt", N: 32768, r: 8, p: 1 };
+// The bucket holds a value that lets anyone who can read it test password
+// guesses offline, so the derivation is the only thing slowing them down.
+// N = 2^17, r = 8, p = 1 is the current OWASP recommendation for scrypt
+// (128 MiB of memory per guess).
+export const DEFAULT_KDF: KdfParams = { name: "scrypt", N: 131072, r: 8, p: 1 };
+
+const MIN_N = 32768;
+const MAX_N = 1048576;
+
+/**
+ * The parameters come from the bucket, which is not trusted. Refuse values
+ * weaker than any version of this plugin ever wrote (a downgrade), or costly
+ * enough to hang the app.
+ */
+export function assertSaneKdf(kdf: unknown): asserts kdf is KdfParams {
+  const k = kdf as Partial<KdfParams> | null;
+  const ok =
+    !!k &&
+    k.name === "scrypt" &&
+    Number.isInteger(k.N) &&
+    k.N! >= MIN_N &&
+    k.N! <= MAX_N &&
+    (k.N! & (k.N! - 1)) === 0 &&
+    k.r === 8 &&
+    Number.isInteger(k.p) &&
+    k.p! >= 1 &&
+    k.p! <= 4;
+  if (!ok)
+    throw new Error(
+      "鍵導出パラメータが許容範囲外です(リモートの r2v2.json が書き換えられた可能性があります)",
+    );
+}
+
+const aadFor = (objectName: string) => Buffer.concat([MAGIC, Buffer.from(objectName, "utf8")]);
 
 export class Cipher {
   private constructor(
@@ -30,6 +65,9 @@ export class Cipher {
   ) {}
 
   static derive(password: string, salt: Buffer, kdf: KdfParams = DEFAULT_KDF): Promise<Cipher> {
+    if (!password) throw new Error("暗号化パスワードが空です");
+    if (salt.length < 16) throw new Error("ソルトが短すぎます");
+    assertSaneKdf(kdf);
     return new Promise((resolve, reject) => {
       scrypt(
         password.normalize("NFKC"),
@@ -68,10 +106,10 @@ export class Cipher {
     }
   }
 
-  encryptContent(data: ArrayBuffer, mtime: number, aad: string): ArrayBuffer {
+  encryptContent(data: ArrayBuffer, mtime: number, objectName: string): ArrayBuffer {
     const nonce = randomBytes(NONCE_LEN);
     const c = createCipheriv("aes-256-gcm", this.contentKey, nonce);
-    c.setAAD(Buffer.from(aad, "utf8"));
+    c.setAAD(aadFor(objectName));
     const head = Buffer.alloc(8);
     head.writeBigUInt64BE(BigInt(Math.max(0, Math.floor(mtime))));
     const out = Buffer.concat([
@@ -85,7 +123,7 @@ export class Cipher {
     return toArrayBuffer(out);
   }
 
-  decryptContent(data: ArrayBuffer, aad: string): { data: ArrayBuffer; mtime: number } {
+  decryptContent(data: ArrayBuffer, objectName: string): { data: ArrayBuffer; mtime: number } {
     const raw = Buffer.from(data);
     const min = MAGIC.length + NONCE_LEN + 8 + TAG_LEN;
     if (raw.length < min || !raw.subarray(0, MAGIC.length).equals(MAGIC)) {
@@ -93,7 +131,7 @@ export class Cipher {
     }
     const nonce = raw.subarray(MAGIC.length, MAGIC.length + NONCE_LEN);
     const d = createDecipheriv("aes-256-gcm", this.contentKey, nonce);
-    d.setAAD(Buffer.from(aad, "utf8"));
+    d.setAAD(aadFor(objectName));
     d.setAuthTag(raw.subarray(raw.length - TAG_LEN));
     let plain: Buffer;
     try {

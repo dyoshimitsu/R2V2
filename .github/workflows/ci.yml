@@ -41,3 +41,37 @@ jobs:
             main.js
             manifest.json
           if-no-files-found: error
+
+  integration:
+    name: Integration (S3-compatible server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Starts SeaweedFS in Docker and runs the real client against it.
+      - run: npm run test:s3
+
+  r2:
+    # The same tests against Cloudflare R2 itself. Enabled by setting the
+    # repository variable R2V2_TEST_BUCKET and the three secrets below.
+    name: Integration (Cloudflare R2)
+    if: vars.R2V2_TEST_BUCKET != '' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run test:integration
+        env:
+          R2V2_TEST_ENDPOINT: ${{ secrets.R2V2_TEST_ACCOUNT_ID }}
+          R2V2_TEST_BUCKET: ${{ vars.R2V2_TEST_BUCKET }}
+          R2V2_TEST_ACCESS_KEY_ID: ${{ secrets.R2V2_TEST_ACCESS_KEY_ID }}
+          R2V2_TEST_SECRET_ACCESS_KEY: ${{ secrets.R2V2_TEST_SECRET_ACCESS_KEY }}
+          R2V2_TEST_REQUIRED: 1
