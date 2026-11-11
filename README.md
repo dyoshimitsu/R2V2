@@ -113,14 +113,14 @@ npm run check   # 型チェック、整形の確認、単体テスト
 npm run format  # Prettier で整形
 ```
 
-| ファイル | 役割 |
-| --- | --- |
-| `src/sync.ts` | 同期エンジン。三者比較で計画を立て、実行する |
-| `src/cipher.ts` | 暗号化の形式(鍵導出、内容、パス) |
-| `src/encrypted-remote.ts` | 暗号化を挟んだリモート。`r2v2.json` の初期化とパスワード照合 |
-| `src/s3.ts`, `src/sigv4.ts`, `src/s3xml.ts` | R2 の S3 API クライアント、リクエスト署名、応答の読み取り |
-| `src/localfs.ts` | vault の読み書き |
-| `src/main.ts`, `src/settings.ts`, `src/confirm-modal.ts` | プラグイン本体と画面 |
+| ファイル                                                 | 役割                                                         |
+| -------------------------------------------------------- | ------------------------------------------------------------ |
+| `src/sync.ts`                                            | 同期エンジン。三者比較で計画を立て、実行する                 |
+| `src/cipher.ts`                                          | 暗号化の形式(鍵導出、内容、パス)                             |
+| `src/encrypted-remote.ts`                                | 暗号化を挟んだリモート。`r2v2.json` の初期化とパスワード照合 |
+| `src/s3.ts`, `src/sigv4.ts`, `src/s3xml.ts`              | R2 の S3 API クライアント、リクエスト署名、応答の読み取り    |
+| `src/localfs.ts`                                         | vault の読み書き                                             |
+| `src/main.ts`, `src/settings.ts`, `src/confirm-modal.ts` | プラグイン本体と画面                                         |
 
 同期エンジンと暗号化層は Obsidian に依存しない。テストでは、メモリ上のバケットと vault を使って二台の端末を再現している。
 
