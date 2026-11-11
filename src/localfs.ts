@@ -1,5 +1,5 @@
 // The vault as the sync engine sees it.
-import { App, TFile, normalizePath } from "obsidian";
+import { App, normalizePath } from "obsidian";
 import { LocalEntry, LocalFs } from "./sync";
 
 export interface LocalFsOptions {
@@ -61,28 +61,52 @@ export class VaultFs implements LocalFs {
     return st?.type === "file" ? { mtime: st.mtime, size: st.size } : null;
   }
 
+  // Files the vault knows about go through the Vault API, which keeps
+  // Obsidian's own cache in step. The config folder is invisible to it, so
+  // only those files fall back to the adapter.
+
   read(path: string): Promise<ArrayBuffer> {
-    return this.app.vault.adapter.readBinary(this.real(path));
+    const target = this.real(path);
+    const file = this.app.vault.getFileByPath(target);
+    return file ? this.app.vault.readBinary(file) : this.app.vault.adapter.readBinary(target);
   }
 
   async write(path: string, data: ArrayBuffer, mtime?: number): Promise<LocalEntry> {
-    const adapter = this.app.vault.adapter;
+    const { vault } = this.app;
     const target = normalizePath(this.real(path));
-    const slash = target.lastIndexOf("/");
-    if (slash > 0) await this.mkdirp(target.slice(0, slash));
-    await adapter.writeBinary(target, data, mtime ? { mtime } : undefined);
-    const st = await adapter.stat(target);
+    const options = mtime ? { mtime } : undefined;
+    const file = vault.getFileByPath(target);
+    if (file) {
+      await vault.modifyBinary(file, data, options);
+    } else if (this.isHidden(target)) {
+      await this.mkdirp(parentOf(target), (dir) => vault.adapter.mkdir(dir));
+      await vault.adapter.writeBinary(target, data, options);
+    } else {
+      await this.mkdirp(parentOf(target), (dir) => vault.createFolder(dir));
+      try {
+        await vault.createBinary(target, data, options);
+      } catch (e) {
+        // On disk but not indexed yet (e.g. created a moment ago): overwrite in place.
+        if (!(await vault.adapter.exists(target))) throw e;
+        await vault.adapter.writeBinary(target, data, options);
+      }
+    }
+    const st = await vault.adapter.stat(target);
     if (!st) throw new Error(`書き込み後に確認できません: ${path}`);
     return { mtime: st.mtime, size: st.size };
   }
 
-  private async mkdirp(dir: string): Promise<void> {
+  private isHidden(path: string): boolean {
+    const config = this.app.vault.configDir;
+    return path === config || path.startsWith(config + "/");
+  }
+
+  private async mkdirp(dir: string, mkdir: (dir: string) => Promise<unknown>): Promise<void> {
     const adapter = this.app.vault.adapter;
-    if (await adapter.exists(dir)) return;
-    const slash = dir.lastIndexOf("/");
-    if (slash > 0) await this.mkdirp(dir.slice(0, slash));
+    if (!dir || (await adapter.exists(dir))) return;
+    await this.mkdirp(parentOf(dir), mkdir);
     try {
-      await adapter.mkdir(dir);
+      await mkdir(dir);
     } catch (e) {
       if (!(await adapter.exists(dir))) throw e; // lost a race with a parallel write: fine
     }
@@ -90,8 +114,8 @@ export class VaultFs implements LocalFs {
 
   async trash(path: string): Promise<void> {
     const target = this.real(path);
-    const file = this.app.vault.getAbstractFileByPath(target);
-    if (file instanceof TFile) {
+    const file = this.app.vault.getFileByPath(target);
+    if (file) {
       // Honors the user's "Deleted files" preference.
       await this.app.fileManager.trashFile(file);
       return;
@@ -101,6 +125,12 @@ export class VaultFs implements LocalFs {
   }
 
   async rename(from: string, to: string): Promise<void> {
-    await this.app.vault.adapter.rename(this.real(from), to);
+    const target = this.real(from);
+    const file = this.app.vault.getFileByPath(target);
+    // Vault.rename, not FileManager.renameFile: links must keep pointing at the original path.
+    if (file) await this.app.vault.rename(file, normalizePath(to));
+    else await this.app.vault.adapter.rename(target, normalizePath(to));
   }
 }
+
+const parentOf = (path: string): string => path.slice(0, Math.max(0, path.lastIndexOf("/")));

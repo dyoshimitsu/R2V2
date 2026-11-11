@@ -1,5 +1,14 @@
 # R2V2
 
+Sync an Obsidian vault between desktops (Linux and macOS) through a Cloudflare R2 bucket. File contents, file names and modification times are encrypted on your device before upload; encryption cannot be turned off. The name stands for "R2 Vault to Vault".
+
+- **Account required**: you need your own Cloudflare account with an R2 bucket and an API token. R2 has a free tier; usage beyond it is billed by Cloudflare.
+- **Network use**: the plugin talks only to the S3 API endpoint of your R2 account (`https://<account-id>.r2.cloudflarestorage.com`, or the endpoint you enter) to list, upload, download and delete the encrypted copies of your files. It contacts no other service.
+- **No telemetry**, no ads, and no access to files outside the vault.
+- Desktop only. The rest of this document is in Japanese.
+
+---
+
 Ubuntu と Mac で同じ vault を開きたい。置き場所には Cloudflare R2 を使いたい。けれども、ノートを読める形のまま他人のストレージに置くのは気が進まない。
 
 R2V2 は、この三つを同時に満たすための Obsidian プラグインである。vault を R2 のバケットと双方向に同期し、バケットに届くものはすべて、手元で暗号化してから送る。暗号化を切る設定はない。
@@ -52,10 +61,18 @@ R2V2 は、この三つを同時に満たすための Obsidian プラグイン�
 
 第三者による監査は受けていない。使っている部品(scrypt、AES-256-GCM、HMAC-SHA256)はすべて Node.js 標準の実装だが、その組み合わせ方は R2V2 独自のものである。
 
+## 外部とのやりとり
+
+R2V2 が通信する相手は一つだけで、設定したアカウントの R2 エンドポイント(`https://<アカウント ID>.r2.cloudflarestorage.com`、または入力したエンドポイント URL)である。行うのは、暗号化したファイルの一覧取得、アップロード、ダウンロード、削除に限られる。作者のサーバーも、解析やテレメトリの送信先も存在しない。
+
+使うには自分の Cloudflare アカウントと R2 バケットが要る。R2 には無料枠があり、それを超えた分は Cloudflare から課金される。プラグイン自体は無料で、MIT ライセンスである。
+
+読み書きするのは vault の中だけである。vault の外のファイルには触れない。
+
 ## セットアップ
 
 1. Cloudflare のダッシュボードで R2 バケットを作り、そのバケットに対する「オブジェクトの読み取りと書き込み」権限の API トークンを発行する。アクセスキー ID とシークレットアクセスキーを控える。
-2. このリポジトリをビルドし、`main.js` と `manifest.json` を vault の `.obsidian/plugins/r2v2/` に置く。
+2. [Releases](https://github.com/dyoshimitsu/R2V2/releases) から `main.js` と `manifest.json` を取得し、vault の `.obsidian/plugins/r2v2/` に置く。自分でビルドする場合は次のとおり。
 
    ```sh
    npm install
@@ -172,6 +189,15 @@ npm run test:integration
 - 型チェック、整形の確認、単体テスト、ビルド(Ubuntu と macOS)。ビルドした `main.js` と `manifest.json` は、実行結果のページから `r2v2` という成果物として取得できる
 - SeaweedFS に対する結合テスト
 - R2 に対する結合テスト。リポジトリの変数 `R2V2_TEST_BUCKET` と、シークレット `R2V2_TEST_ACCOUNT_ID`、`R2V2_TEST_ACCESS_KEY_ID`、`R2V2_TEST_SECRET_ACCESS_KEY` を設定したときだけ動く
+
+### リリース
+
+```sh
+npm version 0.2.0        # manifest.json と versions.json も更新し、コミットしてタグ 0.2.0 を打つ
+git push --follow-tags
+```
+
+タグは `v` を付けず、`manifest.json` の `version` と同じ文字列にする。Obsidian はこのタグの GitHub リリースから `main.js` と `manifest.json` を取得するからである。タグが push されると、GitHub Actions が確認とビルドを行い、成果物の来歴証明(attestation)を付けて、リリースを下書きとして作る。リリースノートを書いて公開すれば完了する。
 
 ## 参考にしたプラグイン
 

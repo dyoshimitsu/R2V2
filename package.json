@@ -14,7 +14,8 @@
     "format:check": "prettier --check .",
     "check": "npm run typecheck && npm run format:check && npm test",
     "test:integration": "node --import tsx --test tests/integration/*.test.ts",
-    "test:s3": "bash scripts/integration.sh"
+    "test:s3": "bash scripts/integration.sh",
+    "version": "node version-bump.mjs && git add manifest.json versions.json"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

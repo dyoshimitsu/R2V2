@@ -3,7 +3,7 @@
   "name": "R2V2",
   "version": "0.1.0",
   "minAppVersion": "1.6.6",
-  "description": "Cloudflare R2 を介して複数のデスクトップ間で vault を同期する。",
+  "description": "Sync your vault between desktops through Cloudflare R2, with end-to-end encryption of file contents and names.",
   "author": "dyoshimitsu",
   "authorUrl": "https://github.com/dyoshimitsu",
   "isDesktopOnly": true
