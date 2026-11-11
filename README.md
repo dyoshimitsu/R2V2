@@ -4,6 +4,8 @@ Ubuntu と Mac で同じ vault を開きたい。置き場所には Cloudflare R
 
 R2V2 は、この三つを同時に満たすための Obsidian プラグインである。vault を R2 のバケットと双方向に同期し、バケットに届くものはすべて、手元で暗号化してから送る。暗号化を切る設定はない。
 
+名前は「R2 Vault to Vault」から来ている。R2 を挟んで、vault から vault へ。
+
 デスクトップ専用(Linux / macOS)。
 
 ## バケットには何が見えるか
@@ -112,7 +114,11 @@ npm test        # 単体テスト
 
 同期エンジン(`src/sync.ts`)と暗号化層(`src/crypto.ts`)は Obsidian に依存しない。テストでは、メモリ上のバケットと vault を使って二台の端末を再現している。
 
-同期の考え方(三者比較、競合コピー、変更割合による保護、無視パス)は [Remotely Save](https://github.com/remotely-save/remotely-save) とその派生である [BYOC](https://github.com/winters27/obsidian-byoc) を参考にした。コードは共有していない。
+## 参考にしたプラグイン
+
+設計にあたっては [BYOC (Bring Your Own Cloud)](https://community.obsidian.md/plugins/byoc) を参考にした。三者比較による同期、競合コピー、変更割合による保護、設定フォルダの同期、無視パス、サイズ上限は、BYOC とその元になった [Remotely Save](https://github.com/remotely-save/remotely-save) の考え方に倣っている。
+
+BYOC は 12 種類のストレージに対応し、暗号化は任意である。R2V2 は対象を R2 だけに絞り、暗号化を必須にした。暗号化の形式も独自で、BYOC の rclone crypt 形式とは互換がない。コードは共有していない。
 
 ## ライセンス
 
