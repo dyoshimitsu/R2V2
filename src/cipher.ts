@@ -10,6 +10,7 @@
 //                    siv = HMAC-SHA256(name MAC key, path)[0..12]  (deterministic)
 import { createCipheriv, createDecipheriv, createHmac, randomBytes, scrypt, timingSafeEqual } from "crypto";
 import { toArrayBuffer } from "./bytes";
+import { t } from "./i18n";
 
 const MAGIC = Buffer.from([0x52, 0x32, 0x56, 0x32, 0x01]); // "R2V2" + format version
 const NONCE_LEN = 12;
@@ -49,10 +50,7 @@ export function assertSaneKdf(kdf: unknown): asserts kdf is KdfParams {
     Number.isInteger(k.p) &&
     k.p! >= 1 &&
     k.p! <= 4;
-  if (!ok)
-    throw new Error(
-      "鍵導出パラメータが許容範囲外です(リモートの r2v2.json が書き換えられた可能性があります)",
-    );
+  if (!ok) throw new Error(t("err_kdf"));
 }
 
 const aadFor = (objectName: string) => Buffer.concat([MAGIC, Buffer.from(objectName, "utf8")]);
@@ -65,8 +63,8 @@ export class Cipher {
   ) {}
 
   static derive(password: string, salt: Buffer, kdf: KdfParams = DEFAULT_KDF): Promise<Cipher> {
-    if (!password) throw new Error("暗号化パスワードが空です");
-    if (salt.length < 16) throw new Error("ソルトが短すぎます");
+    if (!password) throw new Error(t("err_password_empty"));
+    if (salt.length < 16) throw new Error(t("err_salt_short"));
     assertSaneKdf(kdf);
     return new Promise((resolve, reject) => {
       scrypt(
@@ -127,7 +125,7 @@ export class Cipher {
     const raw = Buffer.from(data);
     const min = MAGIC.length + NONCE_LEN + 8 + TAG_LEN;
     if (raw.length < min || !raw.subarray(0, MAGIC.length).equals(MAGIC)) {
-      throw new Error("R2V2 形式の暗号化データではありません");
+      throw new Error(t("err_not_r2v2"));
     }
     const nonce = raw.subarray(MAGIC.length, MAGIC.length + NONCE_LEN);
     const d = createDecipheriv("aes-256-gcm", this.contentKey, nonce);
@@ -140,7 +138,7 @@ export class Cipher {
         d.final(),
       ]);
     } catch {
-      throw new Error("復号に失敗しました(データが壊れているか、改ざんされています)");
+      throw new Error(t("err_decrypt"));
     }
     return { mtime: Number(plain.readBigUInt64BE(0)), data: toArrayBuffer(plain.subarray(8)) };
   }

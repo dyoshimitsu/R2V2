@@ -1,4 +1,5 @@
 import { App, Notice, PluginSettingTab, SecretComponent, Setting } from "obsidian";
+import { TextKey, t } from "./i18n";
 import type R2V2Plugin from "./main";
 import { ConflictAction } from "./sync";
 
@@ -52,13 +53,18 @@ export interface ResolvedSecrets {
   password: string;
 }
 
-export function missingSettings(s: R2V2Settings, secrets: ResolvedSecrets): string[] {
-  const missing: string[] = [];
-  if (!s.endpoint.trim()) missing.push("アカウント ID");
-  if (!s.accessKeyId.trim()) missing.push("アクセスキー ID");
-  if (!secrets.secretAccessKey) missing.push("シークレットアクセスキー");
-  if (!s.bucket.trim()) missing.push("バケット名");
-  if (!secrets.password) missing.push("暗号化パスワード");
+export type RequiredField = "endpoint" | "accessKeyId" | "secretAccessKey" | "bucket" | "password";
+
+export const fieldLabel = (field: RequiredField): string => t(`field_${field}` as TextKey);
+
+/** Which of the settings a sync cannot do without are still empty. */
+export function missingSettings(s: R2V2Settings, secrets: ResolvedSecrets): RequiredField[] {
+  const missing: RequiredField[] = [];
+  if (!s.endpoint.trim()) missing.push("endpoint");
+  if (!s.accessKeyId.trim()) missing.push("accessKeyId");
+  if (!secrets.secretAccessKey) missing.push("secretAccessKey");
+  if (!s.bucket.trim()) missing.push("bucket");
+  if (!secrets.password) missing.push("password");
   return missing;
 }
 
@@ -126,97 +132,65 @@ export class R2V2SettingTab extends PluginSettingTab {
         });
 
     new Setting(containerEl).setName("Cloudflare R2").setHeading();
-    text(
-      "アカウント ID",
-      "Cloudflare のアカウント ID。S3 API のエンドポイント URL をそのまま入れてもよい。",
-      "endpoint",
-      {
-        placeholder: "0123456789abcdef…",
-      },
-    );
-    text("アクセスキー ID", "R2 API トークンのアクセスキー ID。", "accessKeyId");
-    secret(
-      "シークレットアクセスキー",
-      "R2 API トークンのシークレット。Obsidian のシークレットとして保存し、ここではその名前を選ぶ。",
-      "secretAccessKeySecret",
-    );
-    text("バケット名", "同期先のバケット。", "bucket");
-    text(
-      "プレフィックス",
-      "バケット内の置き場所。複数の vault を 1 つのバケットに置くときに分ける。空ならバケット直下。",
-      "prefix",
-      {
-        placeholder: "my-vault",
-      },
-    );
+    text(t("field_endpoint"), t("desc_endpoint"), "endpoint", {
+      placeholder: "0123456789abcdef…",
+    });
+    text(t("field_accessKeyId"), t("desc_accessKeyId"), "accessKeyId");
+    secret(t("field_secretAccessKey"), t("desc_secretAccessKey"), "secretAccessKeySecret");
+    text(t("field_bucket"), t("desc_bucket"), "bucket");
+    text(t("field_prefix"), t("desc_prefix"), "prefix", {
+      placeholder: "my-vault",
+    });
     new Setting(containerEl)
-      .setName("接続テスト")
-      .setDesc("認証情報とパスワードで R2 に接続できるか確かめる。")
+      .setName(t("test_name"))
+      .setDesc(t("test_desc"))
       .addButton((b) =>
-        b.setButtonText("テスト").onClick(async () => {
+        b.setButtonText(t("test_button")).onClick(async () => {
           b.setDisabled(true);
           try {
             new Notice(await this.plugin.testConnection());
           } catch (e) {
-            new Notice(`R2V2: 接続できません — ${e instanceof Error ? e.message : String(e)}`, 10000);
+            new Notice(t("test_failed", { message: e instanceof Error ? e.message : String(e) }), 10000);
           } finally {
             b.setDisabled(false);
           }
         }),
       );
 
-    new Setting(containerEl).setName("暗号化").setHeading();
-    secret(
-      "暗号化パスワード",
-      "必須。ファイルの内容・パス・更新時刻はこのパスワードから導いた鍵で暗号化してから送る。Obsidian のシークレットとして保存し、ここではその名前を選ぶ。同期する全ての端末で同じ値にする。忘れるとリモートのデータは復号できない。",
-      "passwordSecret",
-    );
+    new Setting(containerEl).setName(t("heading_encryption")).setHeading();
+    secret(t("field_password"), t("desc_password"), "passwordSecret");
 
-    new Setting(containerEl).setName("同期のタイミング").setHeading();
+    new Setting(containerEl).setName(t("heading_timing")).setHeading();
     new Setting(containerEl)
-      .setName("起動時に同期")
-      .setDesc("Obsidian の起動直後に 1 回同期する。")
+      .setName(t("startup_name"))
+      .setDesc(t("startup_desc"))
       .addToggle((t) =>
         t.setValue(s.syncOnStartup).onChange(async (v) => {
           s.syncOnStartup = v;
           await this.plugin.saveSettings();
         }),
       );
-    num("定期同期の間隔(分)", "0 で無効。", "intervalMinutes", 0, 1440);
-    num(
-      "編集後の同期(秒)",
-      "最後の編集からこの秒数だけ静かになったら同期する。0 で無効。",
-      "syncOnSaveSeconds",
-      0,
-      3600,
-    );
+    num(t("interval_name"), t("interval_desc"), "intervalMinutes", 0, 1440);
+    num(t("onsave_name"), t("onsave_desc"), "syncOnSaveSeconds", 0, 3600);
 
-    new Setting(containerEl).setName("同期の挙動").setHeading();
+    new Setting(containerEl).setName(t("heading_behavior")).setHeading();
     new Setting(containerEl)
-      .setName("競合したとき")
-      .setDesc("同じファイルが両方の端末で変更されていた場合の扱い。")
+      .setName(t("conflict_name"))
+      .setDesc(t("conflict_desc"))
       .addDropdown((d) =>
         d
-          .addOption("keep_both", "両方残す(手元の版を conflict コピーにする)")
-          .addOption("keep_newer", "更新時刻が新しい方を残す")
+          .addOption("keep_both", t("conflict_keep_both"))
+          .addOption("keep_newer", t("conflict_keep_newer"))
           .setValue(s.conflictAction)
           .onChange(async (v) => {
             s.conflictAction = v as ConflictAction;
             await this.plugin.saveSettings();
           }),
       );
-    num(
-      "大量変更の確認(%)",
-      "1 回の同期で、同期済みファイルのうちこの割合を超えて上書き・削除しようとしたら、実行前に確認する。",
-      "protectPercent",
-      1,
-      100,
-    );
+    num(t("protect_name"), t("protect_desc"), "protectPercent", 1, 100);
     new Setting(containerEl)
-      .setName("設定フォルダも同期")
-      .setDesc(
-        `${this.app.vault.configDir} (プラグイン、テーマ、ホットキーなど)も同期する。ワークスペースの状態とこのプラグイン自身の設定は対象外。受け取った設定の反映には Obsidian の再読み込みが要る。`,
-      )
+      .setName(t("config_name"))
+      .setDesc(t("config_desc", { dir: this.app.vault.configDir }))
       .addToggle((t) =>
         t.setValue(s.syncConfigDir).onChange(async (v) => {
           s.syncConfigDir = v;
@@ -224,10 +198,8 @@ export class R2V2SettingTab extends PluginSettingTab {
         }),
       );
     new Setting(containerEl)
-      .setName("同期しないパス")
-      .setDesc(
-        "1 行に 1 つ。* はフォルダ内、** はフォルダをまたいで一致する。フォルダを書けば配下すべてが対象。",
-      )
+      .setName(t("ignore_name"))
+      .setDesc(t("ignore_desc"))
       .addTextArea((t) => {
         t.inputEl.rows = 4;
         t.setPlaceholder("private\n**/*.tmp")
@@ -237,25 +209,17 @@ export class R2V2SettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           });
       });
-    num(
-      "ファイルサイズ上限(MB)",
-      "これより大きいファイルは同期しない。0 で無制限。",
-      "maxFileSizeMB",
-      0,
-      5000,
-    );
-    num("同時転送数", "並行して転送するファイルの数。", "concurrency", 1, 16);
+    num(t("maxsize_name"), t("maxsize_desc"), "maxFileSizeMB", 0, 5000);
+    num(t("concurrency_name"), t("concurrency_desc"), "concurrency", 1, 16);
 
-    new Setting(containerEl).setName("保守").setHeading();
+    new Setting(containerEl).setName(t("heading_maintenance")).setHeading();
     new Setting(containerEl)
-      .setName("同期状態をリセット")
-      .setDesc(
-        "この端末が覚えている前回同期の記録を捨てる。次回は初回同期として扱われ、何も削除されず、両側のファイルが突き合わされる。",
-      )
+      .setName(t("reset_name"))
+      .setDesc(t("reset_desc"))
       .addButton((b) =>
-        b.setButtonText("リセット").onClick(async () => {
+        b.setButtonText(t("reset_button")).onClick(async () => {
           await this.plugin.resetState();
-          new Notice("R2V2: 同期状態をリセットしました");
+          new Notice(t("reset_done"));
         }),
       );
   }

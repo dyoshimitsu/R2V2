@@ -1,4 +1,5 @@
 import { App, Modal, Setting } from "obsidian";
+import { t } from "./i18n";
 
 /** A yes/no dialog; closing it any other way counts as "no". */
 export class ConfirmModal extends Modal {
@@ -22,7 +23,7 @@ export class ConfirmModal extends Modal {
     this.titleEl.setText(this.title);
     for (const line of this.lines) this.contentEl.createEl("p", { text: line });
     new Setting(this.contentEl)
-      .addButton((b) => b.setButtonText("中止").onClick(() => this.finish(false)))
+      .addButton((b) => b.setButtonText(t("cancel")).onClick(() => this.finish(false)))
       .addButton((b) =>
         b
           .setButtonText(this.confirmLabel)

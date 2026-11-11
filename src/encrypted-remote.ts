@@ -2,6 +2,7 @@
 // the bucket underneath only ever holds ciphertext.
 import { randomBytes } from "crypto";
 import { utf8 } from "./bytes";
+import { t } from "./i18n";
 import { Cipher, DEFAULT_KDF, KdfParams, assertSaneKdf } from "./cipher";
 import { PreconditionFailedError, PutOptions, Remote, RemoteEntry } from "./sync";
 
@@ -22,7 +23,7 @@ export interface RemoteMeta {
 
 export class WrongPasswordError extends Error {
   constructor() {
-    super("パスワードが違います(リモートは別のパスワードで暗号化されています)");
+    super(t("err_wrong_password"));
     this.name = "WrongPasswordError";
   }
 }
@@ -44,10 +45,10 @@ export async function readMeta(store: RawStore): Promise<RemoteMeta | null> {
   try {
     meta = JSON.parse(Buffer.from(existing.data).toString("utf8")) as RemoteMeta;
   } catch {
-    throw new Error(`${META_KEY} を読めません`);
+    throw new Error(t("err_meta_unreadable", { file: META_KEY }));
   }
   if (meta?.version !== 1 || typeof meta.salt !== "string" || typeof meta.check !== "string") {
-    throw new Error(`${META_KEY} の形式を解釈できません(より新しい版で作られた可能性があります)`);
+    throw new Error(t("err_meta_format", { file: META_KEY }));
   }
   assertSaneKdf(meta.kdf);
   return meta;
@@ -74,7 +75,7 @@ export class EncryptedRemote implements Remote {
     password: string,
     cache?: { key: string; cipher: Cipher } | null,
   ): Promise<{ remote: EncryptedRemote; cache: { key: string; cipher: Cipher } }> {
-    if (!password) throw new Error("暗号化パスワードが設定されていません");
+    if (!password) throw new Error(t("err_no_password"));
 
     const derive = async (salt: string, kdf: KdfParams) => {
       const key = JSON.stringify([password, salt, kdf]);
@@ -130,7 +131,7 @@ export class EncryptedRemote implements Remote {
   async get(path: string) {
     const key = this.objectKey(path);
     const obj = await this.store.get(key);
-    if (!obj) throw new Error(`リモートにありません: ${path}`);
+    if (!obj) throw new Error(t("err_remote_missing", { path }));
     const plain = this.cipher.decryptContent(obj.data, key);
     return { data: plain.data, etag: obj.etag, mtime: plain.mtime || undefined };
   }

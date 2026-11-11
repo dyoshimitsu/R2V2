@@ -1,5 +1,6 @@
 // The vault as the sync engine sees it.
 import { App, normalizePath } from "obsidian";
+import { t } from "./i18n";
 import { LocalEntry, LocalFs } from "./sync";
 
 export interface LocalFsOptions {
@@ -92,7 +93,7 @@ export class VaultFs implements LocalFs {
       }
     }
     const st = await vault.adapter.stat(target);
-    if (!st) throw new Error(`書き込み後に確認できません: ${path}`);
+    if (!st) throw new Error(t("err_write_unverified", { path }));
     return { mtime: st.mtime, size: st.size };
   }
 

@@ -221,7 +221,7 @@ test("a downgraded r2v2.json stops the sync before anything is sent", async () =
 
   const puts = store.puts;
   a.fs.set("second.md", "two");
-  await assert.rejects(() => a.sync(), /鍵導出パラメータ/);
+  await assert.rejects(() => a.sync(), /Key derivation parameters/);
   assert.equal(store.puts, puts);
 });
 

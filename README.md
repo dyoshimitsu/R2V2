@@ -1,79 +1,72 @@
 # R2V2
 
-Sync an Obsidian vault between desktops (Linux and macOS) through a Cloudflare R2 bucket. File contents, file names and modification times are encrypted on your device before upload; encryption cannot be turned off. The name stands for "R2 Vault to Vault".
+[日本語](README.ja.md)
+
+R2V2 syncs an Obsidian vault between desktops through a Cloudflare R2 bucket. Everything that reaches the bucket is encrypted on your device first: file contents, file names and modification times. Encryption cannot be turned off.
+
+The name stands for "R2 Vault to Vault", and is read the way R2-D2 is. The plugin ID, `artoo-veetoo`, follows from that.
 
 - **Account required**: you need your own Cloudflare account with an R2 bucket and an API token. R2 has a free tier; usage beyond it is billed by Cloudflare.
 - **Network use**: the plugin talks only to the S3 API endpoint of your R2 account (`https://<account-id>.r2.cloudflarestorage.com`, or the endpoint you enter) to list, upload, download and delete the encrypted copies of your files. It contacts no other service.
 - **No telemetry**, no ads, and no access to files outside the vault.
-- **Secrets**: the R2 secret access key and the encryption password are kept in Obsidian's secret storage, not in the plugin's `data.json`.
-- Desktop only, Obsidian 1.11.4 or later. The rest of this document is in Japanese.
+- **Desktop only** (Linux and macOS), Obsidian 1.11.4 or later. The interface follows Obsidian's language setting and is available in English and Japanese.
 
----
+## What the bucket can see
 
-Ubuntu と Mac で同じ vault を開きたい。置き場所には Cloudflare R2 を使いたい。けれども、ノートを読める形のまま他人のストレージに置くのは気が進まない。
+Encrypting file contents is not enough. A file named `Journal/Thinking about changing jobs.md` says a lot before anyone reads a word of it, and so does the time it was last edited.
 
-R2V2 は、この三つを同時に満たすための Obsidian プラグインである。vault を R2 のバケットと双方向に同期し、バケットに届くものはすべて、手元で暗号化してから送る。暗号化を切る設定はない。
+R2V2 therefore encrypts paths and modification times as well. Someone looking into the bucket sees only:
 
-名前は「R2 Vault to Vault」から来ている。R2 を挟んで、vault から vault へ。読みは R2-D2 のもじりで、プラグインの ID `artoo-veetoo` もそこから取った(ID に数字が使えないためである)。
+- `r2v2.json`, which holds the key-derivation parameters and a salt, and nothing secret
+- objects under `data/` with meaningless names
+- how many there are, roughly how large they are, and when they were uploaded
 
-デスクトップ専用(Linux / macOS)。Obsidian 1.11.4 以降が必要である。
+The folder structure is gone too. A whole path is encrypted into a single name, so everything under `data/` is flat.
 
-## バケットには何が見えるか
+| What           | How                                                                                                                                                                    |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Key derivation | scrypt (N=131072, r=8, p=1). The password and the salt yield three keys: one for contents, one for names, one for the name MAC                                         |
+| Contents       | AES-256-GCM with a random nonce per upload. The modification time is encrypted along with the data; the format version and object name are bound in as associated data |
+| Paths          | AES-256-GCM with a nonce derived from the HMAC-SHA256 of the path, so a path always maps to the same name                                                              |
 
-内容を暗号化すれば十分だろうか。`日記/転職の検討.md` というファイル名は、中身を一文字も読まなくても多くを語る。更新時刻も、いつ何を書いていたかを語る。
+Only path encryption is deterministic, because a file has to map to the same object every time. In exchange, a ciphertext moved to another object name fails to decrypt.
 
-そこで R2V2 は、内容に加えてパスと更新時刻も暗号化する。バケットを覗いた人に見えるのは次のものだけになる。
+If you forget the password, the data in the bucket cannot be decrypted, and there is no recovery mechanism. What you lose is the remote copy, though: the vault on each device is still there in plain form. Sync again to a new prefix with a new password and you are back where you were.
 
-- `r2v2.json`。鍵導出のパラメータとソルトが入っている。秘密は含まない
-- `data/` 以下に並ぶ、意味を持たない名前のオブジェクト
-- その個数、おおよそのサイズ、アップロードされた時刻
+## What the encryption does and does not protect
 
-フォルダ構造も残らない。パス全体を一つの名前に暗号化するので、`data/` の下は平らである。
+Someone who can only read the bucket learns counts, sizes and times. What about someone who can write to it, because an API token leaked or because you do not trust the storage operator?
 
-| 対象   | 方式                                                                                                                    |
-| ------ | ----------------------------------------------------------------------------------------------------------------------- |
-| 鍵導出 | scrypt (N=131072, r=8, p=1)。パスワードとソルトから、内容用・名前用・名前の MAC 用の 3 本の鍵を導く                     |
-| 内容   | AES-256-GCM。ノンスは毎回ランダム。更新時刻を先頭に含めて暗号化し、形式の版とオブジェクト名を関連データとして結びつける |
-| パス   | AES-256-GCM。ノンスはパスの HMAC-SHA256 から決める。同じパスは常に同じ名前になる                                        |
+Modification is detected. AES-GCM refuses to decrypt a ciphertext that has been altered. If a single bit differs, the file is reported as a sync error and is never written to the vault. Moving one file's ciphertext into another file's place fails the same way, because each ciphertext is bound to its own object name.
 
-パスの暗号化だけが決定的なのは、同じファイルを同じオブジェクトに対応させる必要があるからである。その代わり、内容は別のオブジェクト名へ移し替えると復号に失敗する。
+Attacks on `r2v2.json` are closed off as well. If the key-derivation parameters are rewritten to something weak, a range check stops the sync; if the file is replaced with one the attacker prepared, the password check stops it. In both cases nothing has been sent yet.
 
-パスワードを忘れると、バケットのデータは復号できない。復旧の手段は用意していない。もっとも、失うのはリモートの写しであって、各端末の vault は平文のまま手元に残っている。新しいプレフィックスと新しいパスワードで同期し直せば元に戻る。
+Some things it cannot prevent:
 
-## 暗号化はどこまで守るか
+- **Rollback.** If a file is reverted to an older version that was once written correctly, there is no way to tell. The old version is a genuine ciphertext.
+- **Deletion.** A deleted object is indistinguishable from a deletion made by your other device, so the local file is moved to the trash. A large number of them triggers a confirmation dialog.
+- **Password guessing.** The check value in `r2v2.json` lets anyone who has it test password guesses offline. scrypt makes each guess cost 128 MiB of memory, but that does not save a short password or a dictionary word. The encryption is exactly as strong as the password.
+- **Sizes and timing.** A ciphertext is exactly 41 bytes longer than its plaintext. The size of each file, the length of each path, and when things change are not hidden.
+- **The device itself.** The vault sits unencrypted on every device. If a device is compromised, this encryption protects nothing.
 
-バケットを読めるだけの相手に渡るのは、件数とサイズと時刻だけだった。では、相手がバケットを書き換えられるとしたらどうだろうか。API トークンが漏れた場合や、ストレージの運営者を信用しない場合がこれにあたる。
+The content key is shared by all files, and nonces are 96 random bits. The accepted safe limit for that combination is 2^32 encryptions under one key, about 4.3 billion. Each upload counts as one, which is not a number a personal vault reaches.
 
-書き換えは検出される。AES-GCM は改ざんされた暗号文を復号しない。1 ビットでも変わっていれば、そのファイルは同期エラーとして報告され、vault には書き込まれない。あるファイルの暗号文を別のファイルの場所へ移し替えても結果は同じで、暗号文は自分のオブジェクト名に結びついている。
+All of this is checked in `tests/security.test.ts`: that a separate decryptor (WebCrypto), written from the format description alone, can read the data; that flipping any single bit or truncating at any length is detected; that nonces do not repeat; and that none of the tampering described above reaches the vault.
 
-`r2v2.json` を狙う手も塞いである。鍵導出のパラメータを弱いものに書き換えられた場合は許容範囲の検査で、攻撃者が用意した別の `r2v2.json` に差し替えられた場合はパスワードの照合で、何も送信しないうちに同期が止まる。
+The encryption has not been audited by a third party. The building blocks (scrypt, AES-256-GCM, HMAC-SHA256) are the standard Node.js implementations, but the way they are combined is specific to R2V2.
 
-防げないものもある。
+## Network use and accounts
 
-- **巻き戻し**。あるファイルを、過去に正しく書かれた古い版へ戻されても見分けられない。古い版も本物の暗号文だからである。
-- **削除**。オブジェクトを消されると、もう一方の端末が消したのと区別がつかず、手元のファイルはゴミ箱へ移る。数が多ければ確認のダイアログで止まる。
-- **パスワードの総当たり**。`r2v2.json` の照合値は、推測したパスワードが当たっているかを手元で試す材料になる。scrypt は 1 回の試行に 128 MiB のメモリを使わせるが、短いパスワードや辞書にある語までは守れない。パスワードの強さが、そのまま暗号化の強さである。
-- **サイズと頻度**。暗号文は平文よりちょうど 41 バイト長い。ファイルごとのサイズ、パスの長さ、いつ更新されたかは隠れない。
-- **端末そのもの**。vault は各端末に平文で置かれている。端末に入られた場合、この暗号化は何も守らない。
+R2V2 talks to exactly one place: the R2 endpoint of the account you configure (`https://<account-id>.r2.cloudflarestorage.com`, or the endpoint URL you enter). It lists, uploads, downloads and deletes encrypted files there, and does nothing else. There is no server run by the author, and nowhere that analytics or telemetry could go.
 
-内容用の鍵は全ファイルで共通で、ノンスは 96 ビットの乱数である。この組み合わせの安全な上限は、同じ鍵での暗号化 2^32 回(約 43 億回)とされている。1 回のアップロードが 1 回にあたるので、個人の vault が届く数ではない。
+You need your own Cloudflare account and an R2 bucket. R2 has a free tier, and Cloudflare bills for usage beyond it. The plugin itself is free and MIT licensed.
 
-以上は `tests/security.test.ts` で確かめている。形式の記述だけをもとに書いた別の復号処理(WebCrypto)で実際に復号できること。暗号文のどの 1 ビットを反転させても、どの長さで切り詰めても検出されること。ノンスが重複しないこと。上に挙げた書き換えが、どれも vault に届かないこと。
+It reads and writes only inside the vault, and never touches files outside it.
 
-第三者による監査は受けていない。使っている部品(scrypt、AES-256-GCM、HMAC-SHA256)はすべて Node.js 標準の実装だが、その組み合わせ方は R2V2 独自のものである。
+## Setup
 
-## 外部とのやりとり
-
-R2V2 が通信する相手は一つだけで、設定したアカウントの R2 エンドポイント(`https://<アカウント ID>.r2.cloudflarestorage.com`、または入力したエンドポイント URL)である。行うのは、暗号化したファイルの一覧取得、アップロード、ダウンロード、削除に限られる。作者のサーバーも、解析やテレメトリの送信先も存在しない。
-
-使うには自分の Cloudflare アカウントと R2 バケットが要る。R2 には無料枠があり、それを超えた分は Cloudflare から課金される。プラグイン自体は無料で、MIT ライセンスである。
-
-読み書きするのは vault の中だけである。vault の外のファイルには触れない。
-
-## セットアップ
-
-1. Cloudflare のダッシュボードで R2 バケットを作り、そのバケットに対する「オブジェクトの読み取りと書き込み」権限の API トークンを発行する。アクセスキー ID とシークレットアクセスキーを控える。
-2. [Releases](https://github.com/dyoshimitsu/R2V2/releases) から `main.js` と `manifest.json` を取得し、vault の `.obsidian/plugins/artoo-veetoo/` に置く。自分でビルドする場合は次のとおり。
+1. In the Cloudflare dashboard, create an R2 bucket and an API token with "Object Read & Write" permission for that bucket. Note the access key ID and the secret access key.
+2. Download `main.js` and `manifest.json` from [Releases](https://github.com/dyoshimitsu/R2V2/releases) into `.obsidian/plugins/artoo-veetoo/` in your vault. To build it yourself:
 
    ```sh
    npm install
@@ -82,134 +75,135 @@ R2V2 が通信する相手は一つだけで、設定したアカウントの R2
    cp main.js manifest.json /path/to/vault/.obsidian/plugins/artoo-veetoo/
    ```
 
-   fish を使っているなら、ビルドとコピーを `scripts/install.fish /path/to/vault` でまとめて行える。
+   With fish, `scripts/install.fish /path/to/vault` does the build and the copy in one step.
 
-3. Obsidian の「コミュニティプラグイン」で R2V2 を有効にし、設定画面でアカウント ID、アクセスキー ID、バケット名を入れる。シークレットアクセスキーと暗号化パスワードは、それぞれの欄で Obsidian のシークレットを新しく作って選ぶ。「接続テスト」で確かめられる。
-4. リボンの同期アイコンか、コマンド「R2V2: 今すぐ同期」で最初の同期を走らせる。
-5. もう一方の端末でも 2〜4 を行う。パスワードとプレフィックスは同じものにする。
+3. Enable R2V2 under Community plugins, then enter the account ID, access key ID and bucket name in its settings. For the secret access key and the encryption password, create a new Obsidian secret in each field and select it. "Test connection" checks the result.
+4. Run the first sync from the sync icon in the ribbon, or with the command "R2V2: Sync now".
+5. Repeat steps 2 to 4 on the other device, with the same password and prefix.
 
-二台目のパスワードが一台目と違っていた場合、同期は何も触らずに止まる。`r2v2.json` に暗号化した定数が入っていて、復号できるかどうかで照合している。
+If the second device has a different password from the first, the sync stops without touching anything. `r2v2.json` holds an encrypted constant, and the password is checked by whether it decrypts.
 
-二台目にすでに同じ vault の写しがあっても構わない。最初の同期は何も削除せず、両側のファイルを突き合わせる。内容が一致するものはそのまま採用し、食い違うものだけが競合として扱われる。
+It is fine if the second device already has a copy of the same vault. The first sync deletes nothing and reconciles the two sides: files with identical contents are adopted as they are, and only the ones that differ are treated as conflicts.
 
-## 削除をどう見分けるか
+## Telling a deletion from a new file
 
-リモートにないファイルが手元にある。これは「向こうの端末で消された」のだろうか、それとも「まだアップロードしていない」のだろうか。二つの状態を見比べるだけでは区別がつかない。
+A file exists locally and not on the remote. Was it deleted on the other device, or has it simply not been uploaded yet? Comparing the two sides cannot tell.
 
-R2V2 は端末ごとに、前回の同期が済んだ時点の記録(ローカルの更新時刻とサイズ、リモートの ETag)を持っている。今のローカル、今のリモート、前回の記録の三つを比べると、どちらの側が動いたのかが決まる。
+Each device keeps a record of how things stood when its last sync finished: the local modification time and size, and the remote ETag. Comparing the local state, the remote state and that record shows which side moved.
 
-| ローカル | リモート | 動作                           |
-| -------- | -------- | ------------------------------ |
-| 変更あり | 変更なし | アップロード                   |
-| 変更なし | 変更あり | ダウンロード                   |
-| 削除     | 変更なし | リモートを削除                 |
-| 変更なし | 削除     | ローカルをゴミ箱へ             |
-| 変更あり | 削除     | アップロード(編集が削除に勝つ) |
-| 削除     | 変更あり | ダウンロード(同上)             |
-| 変更あり | 変更あり | 競合                           |
+| Local     | Remote    | Action                            |
+| --------- | --------- | --------------------------------- |
+| changed   | unchanged | upload                            |
+| unchanged | changed   | download                          |
+| deleted   | unchanged | delete on the remote              |
+| unchanged | deleted   | move the local file to the trash  |
+| changed   | deleted   | upload (an edit beats a deletion) |
+| deleted   | changed   | download (likewise)               |
+| changed   | changed   | conflict                          |
 
-記録は `.obsidian/plugins/artoo-veetoo/sync-state.json` にあり、同期の対象にはならない。バケット、プレフィックス、ソルトのどれかが変わると記録は捨てられ、次の同期は初回と同じ扱いになる。
+The record lives in `.obsidian/plugins/artoo-veetoo/sync-state.json` and is never synced. If the bucket, the prefix or the salt changes, the record is discarded and the next sync is treated as a first sync.
 
-競合したファイルは、既定では両方残る。リモートの版が元のパスに入り、手元の版は `メモ (conflict 20261111-134500).md` のような別名になって、次の同期でもう一方の端末にも届く。設定で「更新時刻が新しい方を残す」にも変えられる。
+By default a conflict keeps both versions. The remote version takes the original path, and the local one is renamed to something like `Note (conflict 20261111-134500).md`, which reaches the other device on the next sync. You can choose "Keep the more recently modified version" instead.
 
-同期の途中で相手の端末が同じファイルを上げた場合に備えて、アップロードには条件付き書き込み(`If-Match` / `If-None-Match`)を使っている。競り負けたアップロードは取り下げられ、次の同期で競合として処理される。
+In case the other device uploads the same file while a sync is in progress, uploads use conditional writes (`If-Match` / `If-None-Match`). An upload that loses the race is withdrawn and handled as a conflict on the next sync.
 
-### 大量の変更
+### Large changes
 
-三者比較が正しく動いていても、入力が間違っていれば結果は壊れる。別の vault を同じプレフィックスにつないでしまった、といった場合である。
+A correct three-way comparison still produces a wrong result from wrong input, such as pointing a different vault at the same prefix.
 
-1 回の同期が、同期済みファイルの一定割合(既定 50%)を超えて上書きまたは削除しようとすると、実行前に確認のダイアログが出る。中止すれば何も変更されない。ローカルで削除されるファイルは、Obsidian の「削除したファイル」の設定に従ってゴミ箱へ移る。
+When a single sync would overwrite or delete more than a set share of the synced files (50% by default), a confirmation dialog appears first. Cancelling changes nothing. Files deleted locally go to the trash, following Obsidian's "Deleted files" setting.
 
-## 設定
+## Settings
 
-| 項目               | 既定     | 内容                                                                                        |
-| ------------------ | -------- | ------------------------------------------------------------------------------------------- |
-| アカウント ID      | —        | Cloudflare のアカウント ID。エンドポイント URL を直接入れてもよい(EU 管轄のバケットなど)    |
-| プレフィックス     | 空       | バケット内の置き場所。複数の vault を一つのバケットに置くときに分ける                       |
-| 暗号化パスワード   | —        | 必須。シークレットとして保存する。全端末で同じ値にする                                      |
-| 起動時に同期       | 有効     | 起動の数秒後に 1 回                                                                         |
-| 定期同期の間隔     | 5 分     | 0 で無効                                                                                    |
-| 編集後の同期       | 30 秒    | 最後の編集からこの時間が過ぎたら同期。0 で無効                                              |
-| 競合したとき       | 両方残す | または「更新時刻が新しい方を残す」                                                          |
-| 大量変更の確認     | 50%      | 上書き・削除がこの割合を超えたら確認する                                                    |
-| 設定フォルダも同期 | 無効     | `.obsidian` を同期する。`workspace.json` とこのプラグイン自身のフォルダは常に対象外         |
-| 同期しないパス     | 空       | 1 行に 1 つの glob。`*` はフォルダ内、`**` はフォルダをまたぐ。フォルダ名を書けば配下すべて |
-| ファイルサイズ上限 | 100 MB   | 超えるファイルは同期しない。0 で無制限                                                      |
-| 同時転送数         | 4        |                                                                                             |
+| Setting                | Default    | Notes                                                                                                  |
+| ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------ |
+| Account ID             | —          | Your Cloudflare account ID. A full endpoint URL also works (for EU-jurisdiction buckets, for example)  |
+| Prefix                 | empty      | Location inside the bucket. Use it to keep several vaults in one bucket                                |
+| Encryption password    | —          | Required. Stored as a secret. Use the same value on every device                                       |
+| Sync on startup        | on         | Once, a few seconds after startup                                                                      |
+| Sync interval          | 5 minutes  | 0 disables                                                                                             |
+| Sync after editing     | 30 seconds | Syncs once this long has passed since the last edit. 0 disables                                        |
+| On conflict            | keep both  | Or keep the more recently modified version                                                             |
+| Confirm large changes  | 50%        | Asks before overwriting or deleting more than this share                                               |
+| Sync the config folder | off        | Syncs `.obsidian`. `workspace.json` and this plugin's own folder are always excluded                   |
+| Paths to ignore        | empty      | One glob per line. `*` matches within a folder, `**` across folders. A folder name covers its contents |
+| File size limit        | 100 MB     | Larger files are not synced. 0 means no limit                                                          |
+| Concurrent transfers   | 4          |                                                                                                        |
 
-## 制限
+## Limitations
 
-- シークレットアクセスキーと暗号化パスワードは、Obsidian のシークレットストレージに保存される。vault のフォルダには書かれないので、vault を Git や別の同期手段で持ち出しても付いてこない。`data.json` に残るのはシークレットの名前だけである。ただし保存先はその端末の Obsidian のローカルストレージであり、端末に入られた場合まで守るものではない。
-- ファイルは 1 件ずつ丸ごとメモリに読んで暗号化する。巨大なファイルには向かない。
-- リネームは「削除と新規作成」として伝わる。空のフォルダは同期されない。
-- パスワードの変更には対応していない。変えるときは新しいプレフィックスへ同期し直す。
-- ドットで始まるファイルやフォルダは、設定フォルダを除いて同期されない。
-- 同期方向の固定(片方向のみ)はない。
+- The secret access key and the encryption password are kept in Obsidian's secret storage. They are not written into the vault folder, so they do not travel with the vault if you put it in Git or sync it some other way; `data.json` holds only the names of the secrets. That storage is Obsidian's local storage on the device, though, and does not protect against someone who gets into the device.
+- Each file is read into memory whole and encrypted in one piece. It is not suited to very large files.
+- A rename is seen as a deletion plus a new file. Empty folders are not synced.
+- Changing the password is not supported. To change it, sync again to a new prefix.
+- Files and folders whose names start with a dot are not synced, apart from the config folder.
+- There is no one-way sync mode.
 
-## 開発
+## Development
 
 ```sh
-npm run dev       # 監視ビルド
-npm run build     # 本番ビルド
-npm run check     # 型チェック、整形の確認、単体テスト
-npm run test:s3   # 結合テスト(Docker が必要)
-npm run format    # Prettier で整形
+npm run dev       # watch build
+npm run build     # production build
+npm run check     # type check, format check, unit tests
+npm run test:s3   # integration tests (needs Docker)
+npm run format    # format with Prettier
 ```
 
-| ファイル                                                 | 役割                                                         |
-| -------------------------------------------------------- | ------------------------------------------------------------ |
-| `src/sync.ts`                                            | 同期エンジン。三者比較で計画を立て、実行する                 |
-| `src/cipher.ts`                                          | 暗号化の形式(鍵導出、内容、パス)                             |
-| `src/encrypted-remote.ts`                                | 暗号化を挟んだリモート。`r2v2.json` の初期化とパスワード照合 |
-| `src/s3.ts`, `src/sigv4.ts`, `src/s3xml.ts`              | R2 の S3 API クライアント、リクエスト署名、応答の読み取り    |
-| `src/localfs.ts`                                         | vault の読み書き                                             |
-| `src/main.ts`, `src/settings.ts`, `src/confirm-modal.ts` | プラグイン本体と画面                                         |
+| File                                                     | Role                                                                      |
+| -------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `src/sync.ts`                                            | The sync engine: plans with a three-way comparison, then executes         |
+| `src/cipher.ts`                                          | The encryption format (key derivation, contents, paths)                   |
+| `src/encrypted-remote.ts`                                | The remote behind encryption; sets up `r2v2.json` and checks the password |
+| `src/s3.ts`, `src/sigv4.ts`, `src/s3xml.ts`              | Client for R2's S3 API, request signing, response parsing                 |
+| `src/localfs.ts`                                         | Reading and writing the vault                                             |
+| `src/main.ts`, `src/settings.ts`, `src/confirm-modal.ts` | The plugin itself and its interface                                       |
+| `src/i18n.ts`                                            | Interface text in English and Japanese                                    |
 
-同期エンジンと暗号化層は Obsidian に依存しない。テストでは、メモリ上のバケットと vault を使って二台の端末を再現している。
+The sync engine and the encryption layer do not depend on Obsidian. The tests reproduce two devices with an in-memory bucket and in-memory vaults.
 
-### 実際のサーバーに対する確認
+### Testing against a real server
 
-R2 の S3 API を再現するエミュレータは存在しない。Cloudflare の Miniflare が再現するのは Workers から使うバインディングのほうで、このプラグインが使う S3 API ではない。
+There is no emulator for R2's S3 API. Cloudflare's Miniflare emulates the binding used from Workers, not the S3 API this plugin uses.
 
-そこで結合テストは S3 互換サーバーの [SeaweedFS](https://github.com/seaweedfs/seaweedfs) を相手にする。リクエストの署名を検証し、条件付き書き込みにも対応しているので、署名の計算、キーのエンコード、ページ送り、競り負けたアップロードの扱いを、本物の HTTP 越しに確かめられる。`npm run test:s3` が Docker でサーバーを立て、テストを流し、片づける。
+The integration tests therefore run against [SeaweedFS](https://github.com/seaweedfs/seaweedfs), an S3-compatible server. It verifies request signatures and supports conditional writes, so signing, key encoding, pagination and lost upload races are all exercised over real HTTP. `npm run test:s3` starts the server in Docker, runs the tests and cleans up.
 
-それでも SeaweedFS は R2 ではない。同じテストは R2 そのものにも向けられる。
+SeaweedFS is still not R2. The same tests can be pointed at R2 itself:
 
 ```sh
-R2V2_TEST_ENDPOINT=<アカウント ID> \
-R2V2_TEST_BUCKET=<テスト用バケット> \
-R2V2_TEST_ACCESS_KEY_ID=<アクセスキー ID> \
-R2V2_TEST_SECRET_ACCESS_KEY=<シークレット> \
+R2V2_TEST_ENDPOINT=<account ID> \
+R2V2_TEST_BUCKET=<test bucket> \
+R2V2_TEST_ACCESS_KEY_ID=<access key ID> \
+R2V2_TEST_SECRET_ACCESS_KEY=<secret> \
 npm run test:integration
 ```
 
-[direnv](https://direnv.net/) を使う場合は、`.envrc.example` を `.envrc` に写して値を入れればよい。`.envrc` は Git の管理外にしてある。
+With [direnv](https://direnv.net/), copy `.envrc.example` to `.envrc` and fill in the values. `.envrc` is ignored by Git.
 
-テストはランダムなプレフィックスの下だけに書き込み、終わると消す。とはいえ、vault を置いているバケットとは別のものを使うのが安全である。
+The tests write only under a random prefix and remove what they wrote. Even so, use a bucket other than the one that holds your vault.
 
 ### CI
 
-`master` への push と PR ごとに、GitHub Actions が次を走らせる。
+On every push to `master` and every pull request, GitHub Actions runs:
 
-- 型チェック、整形の確認、単体テスト、ビルド(Ubuntu と macOS)。ビルドした `main.js` と `manifest.json` は、実行結果のページから `artoo-veetoo` という成果物として取得できる
-- SeaweedFS に対する結合テスト
-- R2 に対する結合テスト。リポジトリの変数 `R2V2_TEST_BUCKET` と、シークレット `R2V2_TEST_ACCOUNT_ID`、`R2V2_TEST_ACCESS_KEY_ID`、`R2V2_TEST_SECRET_ACCESS_KEY` を設定したときだけ動く
+- the type check, format check, unit tests and build, on Ubuntu and macOS. The built `main.js` and `manifest.json` can be downloaded from the run page as the `artoo-veetoo` artifact
+- the integration tests against SeaweedFS
+- the integration tests against R2, only when the repository variable `R2V2_TEST_BUCKET` and the secrets `R2V2_TEST_ACCOUNT_ID`, `R2V2_TEST_ACCESS_KEY_ID` and `R2V2_TEST_SECRET_ACCESS_KEY` are set
 
-### リリース
+### Releasing
 
 ```sh
-npm version 0.2.0        # manifest.json と versions.json も更新し、コミットしてタグ 0.2.0 を打つ
+npm version 0.2.0        # also updates manifest.json and versions.json, commits, and tags 0.2.0
 git push --follow-tags
 ```
 
-タグは `v` を付けず、`manifest.json` の `version` と同じ文字列にする。Obsidian はこのタグの GitHub リリースから `main.js` と `manifest.json` を取得するからである。タグが push されると、GitHub Actions が確認とビルドを行い、成果物の来歴証明(attestation)を付けて、リリースを下書きとして作る。リリースノートを書いて公開すれば完了する。
+The tag has no `v` prefix and is the same string as `version` in `manifest.json`, because Obsidian downloads `main.js` and `manifest.json` from the GitHub release with that tag. When the tag is pushed, GitHub Actions runs the checks, builds, attaches a provenance attestation to the artifacts and creates the release as a draft. Write the release notes and publish it.
 
-## 参考にしたプラグイン
+## Prior art
 
-設計にあたっては [BYOC (Bring Your Own Cloud)](https://community.obsidian.md/plugins/byoc) を参考にした。三者比較による同期、競合コピー、変更割合による保護、設定フォルダの同期、無視パス、サイズ上限は、BYOC とその元になった [Remotely Save](https://github.com/remotely-save/remotely-save) の考え方に倣っている。
+The design draws on [BYOC (Bring Your Own Cloud)](https://community.obsidian.md/plugins/byoc). Three-way sync, conflict copies, protection by share of changes, config-folder sync, ignore paths and the size limit follow the approach of BYOC and of [Remotely Save](https://github.com/remotely-save/remotely-save), which it is based on.
 
-BYOC は 12 種類のストレージに対応し、暗号化は任意である。R2V2 は対象を R2 だけに絞り、暗号化を必須にした。暗号化の形式も独自で、BYOC の rclone crypt 形式とは互換がない。コードは共有していない。
+BYOC supports twelve storage services and makes encryption optional. R2V2 narrows the target to R2 and makes encryption mandatory. Its encryption format is its own and is not compatible with BYOC's rclone crypt format. No code is shared.
 
-## ライセンス
+## License
 
 MIT
