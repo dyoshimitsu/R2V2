@@ -63,7 +63,7 @@ const en = {
     "Also sync {dir} (plugins, themes, hotkeys and so on). Workspace state and this plugin's own settings are never synced. Reload Obsidian for received settings to take effect.",
   ignore_name: "Paths to ignore",
   ignore_desc:
-    "One per line. * matches within a folder, ** across folders. A folder name covers everything under it.",
+    "One per line. A name without a slash (.git, *.tmp) matches at any depth; a path with a slash is relative to the vault root. * matches within a folder, ** across folders. A folder covers everything under it.",
   maxsize_name: "File size limit (MB)",
   maxsize_desc: "Larger files are not synced. 0 means no limit.",
   concurrency_name: "Concurrent transfers",
@@ -181,7 +181,7 @@ const ja: Record<TextKey, string> = {
     "{dir} (プラグイン、テーマ、ホットキーなど)も同期する。ワークスペースの状態とこのプラグイン自身の設定は対象外。受け取った設定の反映には Obsidian の再読み込みが要る。",
   ignore_name: "同期しないパス",
   ignore_desc:
-    "1 行に 1 つ。* はフォルダ内、** はフォルダをまたいで一致する。フォルダを書けば配下すべてが対象。",
+    "1 行に 1 つ。スラッシュを含まない名前(.git、*.tmp)はどの階層でも一致し、スラッシュを含むパスは vault の直下から数える。* はフォルダ内、** はフォルダをまたいで一致する。フォルダを書けば配下すべてが対象。",
   maxsize_name: "ファイルサイズ上限(MB)",
   maxsize_desc: "これより大きいファイルは同期しない。0 で無制限。",
   concurrency_name: "同時転送数",

@@ -6,7 +6,7 @@ import { LocalEntry, LocalFs } from "./sync";
 export interface LocalFsOptions {
   /** Also sync the config folder (.obsidian). */
   syncConfigDir: boolean;
-  /** Paths that never leave this device (this plugin's own folder, etc). */
+  /** Paths that are out of scope: this plugin's own folder and everything the user ignores. */
   alwaysSkip: (path: string) => boolean;
 }
 

@@ -3,7 +3,7 @@ import { Cipher } from "./cipher";
 import { ConfirmModal } from "./confirm-modal";
 import { EncryptedRemote, readMeta } from "./encrypted-remote";
 import { setLanguage, t } from "./i18n";
-import { compileIgnore } from "./ignore";
+import { compileIgnore, withDefaultIgnores } from "./ignore";
 import { VaultFs } from "./localfs";
 import { HttpClient, R2Store, normalizePrefix, resolveEndpoint } from "./s3";
 import { migrateSecrets } from "./secrets";
@@ -43,7 +43,14 @@ export default class R2V2Plugin extends Plugin {
     // Earlier versions kept the secret key and password in data.json itself.
     const migrated = migrateSecrets(data, this.app.secretStorage);
     this.settings = { ...DEFAULT_SETTINGS, ...(data as Partial<R2V2Settings>) };
-    if (migrated) await this.saveData(this.settings);
+    // New installations start with the default ignore patterns; installations
+    // from before they existed get them added once, after which the list is the user's.
+    const addDefaults = !this.settings.ignoreDefaultsApplied;
+    if (addDefaults) {
+      this.settings.ignorePaths = withDefaultIgnores(this.settings.ignorePaths, this.app.vault.configDir);
+      this.settings.ignoreDefaultsApplied = true;
+    }
+    if (migrated || addDefaults) await this.saveData(this.settings);
 
     this.statusEl = this.addStatusBarItem();
     this.setStatus(t("status_idle"));
@@ -166,26 +173,26 @@ export default class R2V2Plugin extends Plugin {
     if (await adapter.exists(this.statePath())) await adapter.remove(this.statePath());
   }
 
-  /** Paths that never sync, whatever the settings say. */
-  private alwaysSkip = (path: string): boolean => {
-    const config = this.app.vault.configDir;
-    const own = this.manifest.dir ?? `${config}/plugins/${this.manifest.id}`;
-    if (path === own || path.startsWith(own + "/")) return true; // holds credentials and per-device state
-    if (path === `${config}/workspace.json` || path === `${config}/workspace-mobile.json`) return true;
-    return path.split("/").some((seg) => seg === "node_modules" || seg === ".git" || seg === ".DS_Store");
-  };
+  /**
+   * The one path that never syncs whatever the settings say: this plugin's own
+   * folder, which holds the names of the secrets and this device's sync record.
+   */
+  private isOwnFolder(path: string): boolean {
+    const own = this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+    return path === own || path.startsWith(own + "/");
+  }
 
-  private includeFilter(): (key: string, size: number) => boolean {
+  /** `skip` says whether a path is out of scope; `include` also applies the size limit. */
+  private filters(): { skip: (path: string) => boolean; include: (key: string, size: number) => boolean } {
     const s = this.settings;
     const config = this.app.vault.configDir;
     const ignored = compileIgnore(s.ignorePaths);
     const maxBytes = s.maxFileSizeMB > 0 ? s.maxFileSizeMB * 1024 * 1024 : Infinity;
-    return (key, size) => {
-      if (this.alwaysSkip(key)) return false;
-      if (!s.syncConfigDir && (key === config || key.startsWith(config + "/"))) return false;
-      if (size > maxBytes) return false;
-      return !ignored(key);
-    };
+    const skip = (path: string) =>
+      this.isOwnFolder(path) ||
+      (!s.syncConfigDir && (path === config || path.startsWith(config + "/"))) ||
+      ignored(path);
+    return { skip, include: (key, size) => !skip(key) && size <= maxBytes };
   }
 
   async testConnection(): Promise<string> {
@@ -246,10 +253,11 @@ export default class R2V2Plugin extends Plugin {
       ].join("|");
       state = await this.loadState(remoteId);
       const remoteState = state;
-      const local = new VaultFs(this.app, { syncConfigDir: s.syncConfigDir, alwaysSkip: this.alwaysSkip });
+      const { skip, include } = this.filters();
+      const local = new VaultFs(this.app, { syncConfigDir: s.syncConfigDir, alwaysSkip: skip });
 
       const summary = await runSync(local, remote, state, {
-        include: this.includeFilter(),
+        include,
         conflictAction: s.conflictAction,
         protectPercent: s.protectPercent,
         concurrency: s.concurrency,

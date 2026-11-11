@@ -24,6 +24,8 @@ export interface R2V2Settings {
   syncConfigDir: boolean;
   /** One glob per line. */
   ignorePaths: string;
+  /** Whether the default ignore patterns have been added to `ignorePaths` yet. */
+  ignoreDefaultsApplied: boolean;
   /** Skip files larger than this many MB; 0 means no limit. */
   maxFileSizeMB: number;
   concurrency: number;
@@ -43,6 +45,7 @@ export const DEFAULT_SETTINGS: R2V2Settings = {
   protectPercent: 50,
   syncConfigDir: false,
   ignorePaths: "",
+  ignoreDefaultsApplied: false,
   maxFileSizeMB: 100,
   concurrency: 4,
 };
@@ -198,7 +201,7 @@ export class R2V2SettingTab extends PluginSettingTab {
           {
             name: t("ignore_name"),
             desc: t("ignore_desc"),
-            control: { type: "textarea", key: "ignorePaths", rows: 4, placeholder: "private\n**/*.tmp" },
+            control: { type: "textarea", key: "ignorePaths", rows: 8, placeholder: "private\n*.tmp" },
           },
           {
             name: t("maxsize_name"),

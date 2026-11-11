@@ -132,20 +132,37 @@ Where R2V2 deliberately differs from Unison: an edit on one side and a deletion 
 
 ## Settings
 
-| Setting                | Default    | Notes                                                                                                  |
-| ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------ |
-| Account ID             | —          | Your Cloudflare account ID. A full endpoint URL also works (for EU-jurisdiction buckets, for example)  |
-| Prefix                 | empty      | Location inside the bucket. Use it to keep several vaults in one bucket                                |
-| Encryption password    | —          | Required. Stored as a secret. Use the same value on every device                                       |
-| Sync on startup        | on         | Once, a few seconds after startup                                                                      |
-| Sync interval          | 5 minutes  | 0 disables                                                                                             |
-| Sync after editing     | 30 seconds | Syncs once this long has passed since the last edit. 0 disables                                        |
-| On conflict            | keep both  | Or keep the more recently modified version                                                             |
-| Confirm large changes  | 50%        | Asks before overwriting or deleting more than this share                                               |
-| Sync the config folder | off        | Syncs `.obsidian`. `workspace.json` and this plugin's own folder are always excluded                   |
-| Paths to ignore        | empty      | One glob per line. `*` matches within a folder, `**` across folders. A folder name covers its contents |
-| File size limit        | 100 MB     | Larger files are not synced. 0 means no limit                                                          |
-| Concurrent transfers   | 4          |                                                                                                        |
+| Setting                | Default    | Notes                                                                                                 |
+| ---------------------- | ---------- | ----------------------------------------------------------------------------------------------------- |
+| Account ID             | —          | Your Cloudflare account ID. A full endpoint URL also works (for EU-jurisdiction buckets, for example) |
+| Prefix                 | empty      | Location inside the bucket. Use it to keep several vaults in one bucket                               |
+| Encryption password    | —          | Required. Stored as a secret. Use the same value on every device                                      |
+| Sync on startup        | on         | Once, a few seconds after startup                                                                     |
+| Sync interval          | 5 minutes  | 0 disables                                                                                            |
+| Sync after editing     | 30 seconds | Syncs once this long has passed since the last edit. 0 disables                                       |
+| On conflict            | keep both  | Or keep the more recently modified version                                                            |
+| Confirm large changes  | 50%        | Asks before overwriting or deleting more than this share                                              |
+| Sync the config folder | off        | Syncs `.obsidian`. `workspace.json` and this plugin's own folder are always excluded                  |
+| Paths to ignore        | see below  | One glob per line, in the manner of `.gitignore`                                                      |
+| File size limit        | 100 MB     | Larger files are not synced. 0 means no limit                                                         |
+| Concurrent transfers   | 4          |                                                                                                       |
+
+### Paths to ignore
+
+A new installation starts with these patterns, and you can edit the list freely:
+
+```
+.git
+.trash
+node_modules
+.DS_Store
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+```
+
+A name without a slash, such as `.git` or `*.tmp`, matches at any depth. A path with a slash, such as `notes/drafts`, is relative to the vault root; a leading slash (`/todo.md`) pins a single name to the root. `*` matches within a folder and `**` across folders. A pattern that matches a folder covers everything under it.
+
+The plugin's own folder is never synced, whatever the list says. An ignored path is left alone on both sides: it is neither uploaded, nor downloaded, nor deleted.
 
 ## Limitations
 
@@ -153,7 +170,7 @@ Where R2V2 deliberately differs from Unison: an edit on one side and a deletion 
 - Each file is read into memory whole and encrypted in one piece. It is not suited to very large files.
 - A rename is seen as a deletion plus a new file. Empty folders are not synced.
 - Changing the password is not supported. To change it, sync again to a new prefix.
-- Files and folders whose names start with a dot are not synced, apart from the config folder.
+- Files and folders whose names start with a dot are not synced, apart from the config folder. Obsidian does not index them, so `.git` at the vault root would be skipped even without the pattern; the pattern matters inside the config folder, for example a plugin you develop there.
 - There is no one-way sync mode.
 - An edit that keeps the file's size and modification time exactly, made more than a few seconds after the file was last synced, is not noticed. Ordinary editing always changes the modification time.
 - Deleting on one device while another uploads a new version of the same file can still lose that version if the upload lands in the instant between the last check and the delete. The other device keeps its copy until its next sync, where it goes to the trash.
