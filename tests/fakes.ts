@@ -1,6 +1,15 @@
 import { createHash } from "crypto";
-import { RawStore } from "../src/crypto";
-import { LocalEntry, LocalFs, PreconditionFailedError, RemoteEntry } from "../src/sync";
+import { Cipher } from "../src/cipher";
+import { EncryptedRemote, RawStore } from "../src/encrypted-remote";
+import {
+  LocalEntry,
+  LocalFs,
+  PreconditionFailedError,
+  RemoteEntry,
+  SyncOptions,
+  SyncState,
+  runSync,
+} from "../src/sync";
 
 export const buf = (s: string): ArrayBuffer => {
   const b = Buffer.from(s, "utf8");
@@ -27,7 +36,11 @@ export class MemoryStore implements RawStore {
     return this.objects.get(key) ?? null;
   }
 
-  async put(key: string, data: ArrayBuffer, opts: { ifMatch?: string; ifNoneMatch?: boolean }): Promise<string> {
+  async put(
+    key: string,
+    data: ArrayBuffer,
+    opts: { ifMatch?: string; ifNoneMatch?: boolean },
+  ): Promise<string> {
     const cur = this.objects.get(key);
     if (opts.ifMatch && cur?.etag !== opts.ifMatch) throw new PreconditionFailedError(key);
     if (!opts.ifMatch && opts.ifNoneMatch && cur) throw new PreconditionFailedError(key);
@@ -98,3 +111,26 @@ export class MemoryFs implements LocalFs {
     this.files.set(to, f);
   }
 }
+
+/** One machine: its own vault and sync record, sharing a bucket with others. */
+export class Device {
+  fs = new MemoryFs();
+  state: SyncState = { remoteId: "test", files: {} };
+  private cache: { key: string; cipher: Cipher } | null = null;
+
+  constructor(
+    readonly store: MemoryStore,
+    private readonly password = "correct horse",
+  ) {}
+
+  async sync(opts: SyncOptions = {}) {
+    const opened = await EncryptedRemote.open(this.store, this.password, this.cache);
+    this.cache = opened.cache;
+    return runSync(this.fs, opened.remote, this.state, opts);
+  }
+}
+
+export const pair = () => {
+  const store = new MemoryStore();
+  return { store, a: new Device(store), b: new Device(store) };
+};

@@ -1,4 +1,4 @@
-import { App, Modal, Notice, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type R2V2Plugin from "./main";
 import { ConflictAction } from "./sync";
 
@@ -54,48 +54,6 @@ export function missingSettings(s: R2V2Settings): string[] {
   return missing;
 }
 
-export class ConfirmModal extends Modal {
-  private resolved = false;
-
-  constructor(
-    app: App,
-    private readonly title: string,
-    private readonly lines: string[],
-    private readonly confirmLabel: string,
-    private readonly resolve: (ok: boolean) => void,
-  ) {
-    super(app);
-  }
-
-  static ask(app: App, title: string, lines: string[], confirmLabel: string): Promise<boolean> {
-    return new Promise((resolve) => new ConfirmModal(app, title, lines, confirmLabel, resolve).open());
-  }
-
-  onOpen(): void {
-    this.titleEl.setText(this.title);
-    for (const line of this.lines) this.contentEl.createEl("p", { text: line });
-    new Setting(this.contentEl)
-      .addButton((b) => b.setButtonText("中止").onClick(() => this.finish(false)))
-      .addButton((b) =>
-        b
-          .setButtonText(this.confirmLabel)
-          .setWarning()
-          .onClick(() => this.finish(true)),
-      );
-  }
-
-  private finish(ok: boolean): void {
-    this.resolved = true;
-    this.resolve(ok);
-    this.close();
-  }
-
-  onClose(): void {
-    if (!this.resolved) this.resolve(false);
-    this.contentEl.empty();
-  }
-}
-
 export class R2V2SettingTab extends PluginSettingTab {
   constructor(
     app: App,
@@ -149,15 +107,25 @@ export class R2V2SettingTab extends PluginSettingTab {
         });
 
     new Setting(containerEl).setName("Cloudflare R2").setHeading();
-    text("アカウント ID", "Cloudflare のアカウント ID。S3 API のエンドポイント URL をそのまま入れてもよい。", "endpoint", {
-      placeholder: "0123456789abcdef…",
-    });
+    text(
+      "アカウント ID",
+      "Cloudflare のアカウント ID。S3 API のエンドポイント URL をそのまま入れてもよい。",
+      "endpoint",
+      {
+        placeholder: "0123456789abcdef…",
+      },
+    );
     text("アクセスキー ID", "R2 API トークンのアクセスキー ID。", "accessKeyId");
     text("シークレットアクセスキー", "R2 API トークンのシークレット。", "secretAccessKey", { secret: true });
     text("バケット名", "同期先のバケット。", "bucket");
-    text("プレフィックス", "バケット内の置き場所。複数の vault を 1 つのバケットに置くときに分ける。空ならバケット直下。", "prefix", {
-      placeholder: "my-vault",
-    });
+    text(
+      "プレフィックス",
+      "バケット内の置き場所。複数の vault を 1 つのバケットに置くときに分ける。空ならバケット直下。",
+      "prefix",
+      {
+        placeholder: "my-vault",
+      },
+    );
     new Setting(containerEl)
       .setName("接続テスト")
       .setDesc("認証情報とパスワードで R2 に接続できるか確かめる。")
@@ -193,7 +161,13 @@ export class R2V2SettingTab extends PluginSettingTab {
         }),
       );
     num("定期同期の間隔(分)", "0 で無効。", "intervalMinutes", 0, 1440);
-    num("編集後の同期(秒)", "最後の編集からこの秒数だけ静かになったら同期する。0 で無効。", "syncOnSaveSeconds", 0, 3600);
+    num(
+      "編集後の同期(秒)",
+      "最後の編集からこの秒数だけ静かになったら同期する。0 で無効。",
+      "syncOnSaveSeconds",
+      0,
+      3600,
+    );
 
     new Setting(containerEl).setName("同期の挙動").setHeading();
     new Setting(containerEl)
@@ -229,7 +203,9 @@ export class R2V2SettingTab extends PluginSettingTab {
       );
     new Setting(containerEl)
       .setName("同期しないパス")
-      .setDesc("1 行に 1 つ。* はフォルダ内、** はフォルダをまたいで一致する。フォルダを書けば配下すべてが対象。")
+      .setDesc(
+        "1 行に 1 つ。* はフォルダ内、** はフォルダをまたいで一致する。フォルダを書けば配下すべてが対象。",
+      )
       .addTextArea((t) => {
         t.inputEl.rows = 4;
         t.setPlaceholder("private\n**/*.tmp")
@@ -239,7 +215,13 @@ export class R2V2SettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           });
       });
-    num("ファイルサイズ上限(MB)", "これより大きいファイルは同期しない。0 で無制限。", "maxFileSizeMB", 0, 5000);
+    num(
+      "ファイルサイズ上限(MB)",
+      "これより大きいファイルは同期しない。0 で無制限。",
+      "maxFileSizeMB",
+      0,
+      5000,
+    );
     num("同時転送数", "並行して転送するファイルの数。", "concurrency", 1, 16);
 
     new Setting(containerEl).setName("保守").setHeading();

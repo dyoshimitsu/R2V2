@@ -1,17 +1,9 @@
 // R2 client built on Obsidian's requestUrl (which is not subject to CORS).
-// It only ever sees ciphertext: encryption happens one layer up, in crypto.ts.
+// It only ever sees ciphertext: encryption happens one layer up, in encrypted-remote.ts.
 import { requestUrl } from "obsidian";
-import { RawStore } from "./crypto";
-import {
-  Credentials,
-  canonicalQuery,
-  encodeKeyPath,
-  parseErrorXml,
-  parseListXml,
-  sha256Hex,
-  signRequest,
-  stripEtag,
-} from "./s3core";
+import { RawStore } from "./encrypted-remote";
+import { parseErrorXml, parseListXml, stripEtag } from "./s3xml";
+import { Credentials, canonicalQuery, encodeKeyPath, sha256Hex, signRequest } from "./sigv4";
 import { PreconditionFailedError, RemoteEntry } from "./sync";
 
 export interface R2Config {
@@ -127,7 +119,11 @@ export class R2Store implements RawStore {
     return { data: res.arrayBuffer, etag: stripEtag(header(res.headers, "etag") ?? "") };
   }
 
-  async put(key: string, data: ArrayBuffer, opts: { ifMatch?: string; ifNoneMatch?: boolean }): Promise<string> {
+  async put(
+    key: string,
+    data: ArrayBuffer,
+    opts: { ifMatch?: string; ifNoneMatch?: boolean },
+  ): Promise<string> {
     const unsigned: Record<string, string> = {};
     if (opts.ifMatch) unsigned["If-Match"] = `"${opts.ifMatch}"`;
     else if (opts.ifNoneMatch) unsigned["If-None-Match"] = "*";

@@ -1,5 +1,4 @@
-// Pure helpers for talking to an S3-compatible API (no Obsidian imports, so
-// they can be unit-tested under plain Node).
+// AWS Signature Version 4 request signing, as used by the S3 API of R2.
 import { createHash, createHmac } from "crypto";
 
 export interface Credentials {
@@ -13,10 +12,7 @@ export function sha256Hex(data: string | Uint8Array): string {
 
 /** Percent-encode everything except the RFC 3986 unreserved characters. */
 export function encodeRfc3986(s: string): string {
-  return encodeURIComponent(s).replace(
-    /[!'()*]/g,
-    (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase(),
-  );
+  return encodeURIComponent(s).replace(/[!'()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
 }
 
 /** Encode an object key for use as a URL path, keeping "/" separators. */
@@ -92,94 +88,4 @@ export function signRequest(input: SignInput): Record<string, string> {
     `AWS4-HMAC-SHA256 Credential=${input.credentials.accessKeyId}/${scope}, ` +
     `SignedHeaders=${signedHeaders}, Signature=${signature}`;
   return headers;
-}
-
-function decodeXml(s: string): string {
-  return s.replace(/&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|apos);/g, (_, e: string) => {
-    switch (e) {
-      case "amp":
-        return "&";
-      case "lt":
-        return "<";
-      case "gt":
-        return ">";
-      case "quot":
-        return '"';
-      case "apos":
-        return "'";
-    }
-    const code = e[1] === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-    return String.fromCodePoint(code);
-  });
-}
-
-function tag(xml: string, name: string): string | undefined {
-  const m = new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(xml);
-  return m ? decodeXml(m[1]) : undefined;
-}
-
-export function stripEtag(etag: string): string {
-  return etag.replace(/^W\//, "").replace(/^"|"$/g, "");
-}
-
-export interface ListedObject {
-  key: string;
-  etag: string;
-  size: number;
-}
-
-export interface ListPage {
-  objects: ListedObject[];
-  nextToken?: string;
-}
-
-/** Parse a ListObjectsV2 response body. */
-export function parseListXml(xml: string): ListPage {
-  const objects: ListedObject[] = [];
-  const re = /<Contents>([\s\S]*?)<\/Contents>/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(xml))) {
-    const key = tag(m[1], "Key");
-    if (key === undefined) continue;
-    objects.push({
-      key,
-      etag: stripEtag(tag(m[1], "ETag") ?? ""),
-      size: Number(tag(m[1], "Size") ?? 0),
-    });
-  }
-  const truncated = tag(xml, "IsTruncated") === "true";
-  return { objects, nextToken: truncated ? tag(xml, "NextContinuationToken") : undefined };
-}
-
-/** Extract `<Code>: <Message>` from an S3 error body, if present. */
-export function parseErrorXml(xml: string): string {
-  const code = tag(xml, "Code");
-  const message = tag(xml, "Message");
-  return [code, message].filter(Boolean).join(": ");
-}
-
-/**
- * Simple glob matcher for exclude patterns. `*` matches within a path
- * segment, `**` matches across segments. A pattern also matches everything
- * beneath a matching folder.
- */
-export function globToRegExp(pattern: string): RegExp {
-  const p = pattern.trim().replace(/^\/+|\/+$/g, "");
-  let re = "";
-  for (let i = 0; i < p.length; i++) {
-    const c = p[i];
-    if (c === "*") {
-      if (p[i + 1] === "*") {
-        re += ".*";
-        i++;
-      } else {
-        re += "[^/]*";
-      }
-    } else if (c === "?") {
-      re += "[^/]";
-    } else {
-      re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-    }
-  }
-  return new RegExp(`^${re}(/.*)?$`);
 }

@@ -1,6 +1,7 @@
 // The sync engine. It only talks to the two interfaces below, so it runs
 // unchanged against Obsidian + R2 in the plugin and against in-memory fakes
 // in tests.
+import { sameBytes } from "./bytes";
 export interface LocalEntry {
   mtime: number;
   size: number;
@@ -102,6 +103,31 @@ export function planSync(
   return actions;
 }
 
+export interface Risk {
+  /** Existing files this pass would overwrite or delete. */
+  changes: number;
+  /** How many of those are deletions. */
+  deletions: number;
+  /** Files synced before this pass. */
+  total: number;
+}
+
+/**
+ * How much existing data a plan puts at stake. A pass that rewrites or removes
+ * a large part of the vault at once usually means something is off (wrong
+ * bucket, wiped remote, lost sync record) rather than a real wave of edits.
+ */
+export function assessRisk(actions: Action[], total: number): Risk {
+  let deletions = 0;
+  let overwrites = 0;
+  for (const a of actions) {
+    if (a.type === "deleteLocal" || a.type === "deleteRemote") deletions++;
+    else if (a.type === "conflict" || (a.type === "upload" && a.remote) || (a.type === "download" && a.local))
+      overwrites++;
+  }
+  return { changes: deletions + overwrites, deletions, total };
+}
+
 export interface SyncSummary {
   uploaded: number;
   downloaded: number;
@@ -123,16 +149,13 @@ export interface SyncOptions {
    * the previously synced files (default 50). Without a callback it aborts.
    */
   protectPercent?: number;
-  confirmLargeChange?: (info: { changes: number; deletions: number; total: number }) => Promise<boolean>;
+  confirmLargeChange?: (risk: Risk) => Promise<boolean>;
   onProgress?: (done: number, total: number) => void;
   concurrency?: number;
   now?: () => Date;
 }
 
 export type ConflictAction = "keep_both" | "keep_newer";
-
-const sameBytes = (a: ArrayBuffer, b: ArrayBuffer) =>
-  a.byteLength === b.byteLength && Buffer.from(a).equals(Buffer.from(b));
 
 export function conflictPath(path: string, now: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");
@@ -185,16 +208,9 @@ export async function runSync(
 
   const actions = planSync(localMap, remoteMap, base);
 
-  // Guard against a pass that would rewrite or remove a large part of the
-  // vault at once (wrong bucket, wiped remote, clock or state mishap).
-  const deletions = actions.filter((a) => a.type === "deleteLocal" || a.type === "deleteRemote").length;
-  const overwrites = actions.filter(
-    (a) => a.type === "conflict" || (a.type === "upload" && a.remote) || (a.type === "download" && a.local),
-  ).length;
-  const total = Object.keys(base).length;
-  const changes = deletions + overwrites;
-  if (changes > 10 && changes > (total * (opts.protectPercent ?? 50)) / 100) {
-    const ok = opts.confirmLargeChange ? await opts.confirmLargeChange({ changes, deletions, total }) : false;
+  const risk = assessRisk(actions, Object.keys(base).length);
+  if (risk.changes > 10 && risk.changes > (risk.total * (opts.protectPercent ?? 50)) / 100) {
+    const ok = opts.confirmLargeChange ? await opts.confirmLargeChange(risk) : false;
     if (!ok) {
       summary.aborted = true;
       return summary;
@@ -205,6 +221,22 @@ export async function runSync(
     state.files[key] = { mtime: st.mtime, size: st.size, etag };
   };
 
+  /** Upload unless the remote moved since we looked; the next pass then sees a conflict. */
+  const upload = async (key: string, data: ArrayBuffer, st: LocalEntry, expected: string | undefined) => {
+    try {
+      const etag = await remote.put(key, data, {
+        mtime: st.mtime,
+        ifMatch: expected,
+        ifNoneMatch: !expected,
+      });
+      record(key, st, etag);
+      summary.uploaded++;
+    } catch (e) {
+      if (!(e instanceof PreconditionFailedError)) throw e;
+      summary.skipped++;
+    }
+  };
+
   const exec = async (a: Action): Promise<void> => {
     const { key } = a;
     switch (a.type) {
@@ -212,22 +244,9 @@ export async function runSync(
         delete state.files[key];
         return;
 
-      case "upload": {
-        const data = await local.read(key);
-        try {
-          const etag = await remote.put(key, data, {
-            mtime: a.local!.mtime,
-            ifMatch: a.remote?.etag,
-            ifNoneMatch: !a.remote,
-          });
-          record(key, a.local!, etag);
-          summary.uploaded++;
-        } catch (e) {
-          if (!(e instanceof PreconditionFailedError)) throw e;
-          summary.skipped++; // the next pass sees it as a conflict
-        }
+      case "upload":
+        await upload(key, await local.read(key), a.local!, a.remote?.etag);
         return;
-      }
 
       case "download": {
         if (!sameStat(await local.stat(key), a.local)) {
@@ -254,14 +273,7 @@ export async function runSync(
         }
         if (opts.conflictAction === "keep_newer") {
           if (a.local!.mtime > (obj.mtime ?? 0)) {
-            try {
-              const etag = await remote.put(key, data, { mtime: a.local!.mtime, ifMatch: obj.etag });
-              record(key, a.local!, etag);
-              summary.uploaded++;
-            } catch (e) {
-              if (!(e instanceof PreconditionFailedError)) throw e;
-              summary.skipped++;
-            }
+            await upload(key, data, a.local!, obj.etag);
           } else {
             const st = await local.write(key, obj.data, obj.mtime);
             record(key, st, obj.etag);
@@ -297,20 +309,24 @@ export async function runSync(
     }
   };
 
-  let next = 0;
   let done = 0;
-  const worker = async () => {
-    while (next < actions.length) {
-      const a = actions[next++];
-      try {
-        await exec(a);
-      } catch (e) {
-        summary.errors.push({ key: a.key, message: e instanceof Error ? e.message : String(e) });
-      }
-      opts.onProgress?.(++done, actions.length);
+  await runPool(actions, opts.concurrency ?? 4, async (a) => {
+    try {
+      await exec(a);
+    } catch (e) {
+      summary.errors.push({ key: a.key, message: e instanceof Error ? e.message : String(e) });
     }
-  };
-  await Promise.all(Array.from({ length: Math.min(opts.concurrency ?? 4, actions.length) }, worker));
+    opts.onProgress?.(++done, actions.length);
+  });
 
   return summary;
+}
+
+/** Run `task` over `items`, at most `limit` at a time. */
+async function runPool<T>(items: T[], limit: number, task: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await task(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }

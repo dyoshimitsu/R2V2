@@ -1,9 +1,11 @@
 import { Notice, Plugin, debounce } from "obsidian";
-import { Cipher, EncryptedRemote, META_KEY } from "./crypto";
+import { Cipher } from "./cipher";
+import { ConfirmModal } from "./confirm-modal";
+import { EncryptedRemote, readMeta } from "./encrypted-remote";
+import { compileIgnore } from "./ignore";
 import { VaultFs } from "./localfs";
 import { R2Store, normalizePrefix, resolveEndpoint } from "./s3";
-import { globToRegExp } from "./s3core";
-import { ConfirmModal, DEFAULT_SETTINGS, R2V2SettingTab, R2V2Settings, missingSettings } from "./settings";
+import { DEFAULT_SETTINGS, R2V2SettingTab, R2V2Settings, missingSettings } from "./settings";
 import { SyncState, SyncSummary, runSync } from "./sync";
 
 const STATE_FILE = "sync-state.json";
@@ -60,7 +62,10 @@ export default class R2V2Plugin extends Plugin {
     if (this.intervalId !== null) window.clearInterval(this.intervalId);
     this.intervalId = null;
     if (this.settings.intervalMinutes > 0) {
-      this.intervalId = window.setInterval(() => void this.sync(false), this.settings.intervalMinutes * 60_000);
+      this.intervalId = window.setInterval(
+        () => void this.sync(false),
+        this.settings.intervalMinutes * 60_000,
+      );
     }
 
     this.scheduleSaveSync?.cancel();
@@ -124,17 +129,13 @@ export default class R2V2Plugin extends Plugin {
   private includeFilter(): (key: string, size: number) => boolean {
     const s = this.settings;
     const config = this.app.vault.configDir;
-    const ignores = s.ignorePaths
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .map(globToRegExp);
+    const ignored = compileIgnore(s.ignorePaths);
     const maxBytes = s.maxFileSizeMB > 0 ? s.maxFileSizeMB * 1024 * 1024 : Infinity;
     return (key, size) => {
       if (this.alwaysSkip(key)) return false;
       if (!s.syncConfigDir && (key === config || key.startsWith(config + "/"))) return false;
       if (size > maxBytes) return false;
-      return !ignores.some((re) => re.test(key));
+      return !ignored(key);
     };
   }
 
@@ -143,7 +144,7 @@ export default class R2V2Plugin extends Plugin {
     if (missing.length) throw new Error(`未設定: ${missing.join("、")}`);
     const store = this.store();
     await store.ping();
-    if (!(await store.get(META_KEY))) {
+    if (!(await readMeta(store))) {
       return "R2V2: 接続できました。リモートは未初期化で、最初の同期で暗号化の設定が作られます。";
     }
     if (!this.settings.password) return "R2V2: 接続できました。暗号化パスワードが未設定です。";
@@ -174,7 +175,12 @@ export default class R2V2Plugin extends Plugin {
       this.keyCache = opened.cache;
       const remote = opened.remote;
 
-      const remoteId = [resolveEndpoint(s.endpoint), s.bucket.trim(), normalizePrefix(s.prefix), remote.id].join("|");
+      const remoteId = [
+        resolveEndpoint(s.endpoint),
+        s.bucket.trim(),
+        normalizePrefix(s.prefix),
+        remote.id,
+      ].join("|");
       state = await this.loadState(remoteId);
       const local = new VaultFs(this.app, { syncConfigDir: s.syncConfigDir, alwaysSkip: this.alwaysSkip });
 
@@ -223,7 +229,8 @@ export default class R2V2Plugin extends Plugin {
     const parts: string[] = [];
     if (summary.uploaded) parts.push(`↑${summary.uploaded}`);
     if (summary.downloaded) parts.push(`↓${summary.downloaded}`);
-    if (summary.deletedLocal + summary.deletedRemote) parts.push(`削除 ${summary.deletedLocal + summary.deletedRemote}`);
+    if (summary.deletedLocal + summary.deletedRemote)
+      parts.push(`削除 ${summary.deletedLocal + summary.deletedRemote}`);
     if (summary.conflicts.length) parts.push(`競合 ${summary.conflicts.length}`);
     if (summary.errors.length) parts.push(`失敗 ${summary.errors.length}`);
     const detail = parts.length ? parts.join(" ") : "変更なし";

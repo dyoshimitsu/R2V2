@@ -1,138 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Cipher, DATA_PREFIX, EncryptedRemote, KdfParams, META_KEY, WrongPasswordError } from "../src/crypto";
-import { globToRegExp, parseListXml, signRequest } from "../src/s3core";
-import { SyncOptions, SyncState, conflictPath, planSync, runSync } from "../src/sync";
-import { MemoryFs, MemoryStore, buf, str } from "./fakes";
-
-// --- helpers -------------------------------------------------------------
-
-class Device {
-  fs = new MemoryFs();
-  state: SyncState = { remoteId: "test", files: {} };
-  private cache: { key: string; cipher: Cipher } | null = null;
-
-  constructor(
-    private readonly store: MemoryStore,
-    private readonly password = "correct horse",
-  ) {}
-
-  async sync(opts: SyncOptions = {}) {
-    const opened = await EncryptedRemote.open(this.store, this.password, this.cache);
-    this.cache = opened.cache;
-    return runSync(this.fs, opened.remote, this.state, opts);
-  }
-}
-
-const pair = () => {
-  const store = new MemoryStore();
-  return { store, a: new Device(store), b: new Device(store) };
-};
-
-// --- signing and parsing ---------------------------------------------------
-
-test("SigV4 matches the AWS documentation example (GET object)", () => {
-  const headers = signRequest({
-    method: "GET",
-    host: "examplebucket.s3.amazonaws.com",
-    path: "/test.txt",
-    query: "",
-    headers: { Range: "bytes=0-9" },
-    payloadHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    credentials: {
-      accessKeyId: "AKIAIOSFODNN7EXAMPLE",
-      secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-    },
-    region: "us-east-1",
-    date: new Date(Date.UTC(2013, 4, 24, 0, 0, 0)),
-  });
-  assert.match(
-    headers["authorization"],
-    /Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41$/,
-  );
-  assert.match(headers["authorization"], /SignedHeaders=host;range;x-amz-content-sha256;x-amz-date,/);
-});
-
-test("ListObjectsV2 XML is parsed, including entities and pagination", () => {
-  const xml =
-    `<?xml version="1.0"?><ListBucketResult><IsTruncated>true</IsTruncated>` +
-    `<Contents><Key>data/a&amp;b</Key><ETag>&quot;abc&quot;</ETag><Size>12</Size></Contents>` +
-    `<Contents><Key>data/c</Key><ETag>"def"</ETag><Size>0</Size></Contents>` +
-    `<NextContinuationToken>tok==</NextContinuationToken></ListBucketResult>`;
-  assert.deepEqual(parseListXml(xml), {
-    objects: [
-      { key: "data/a&b", etag: "abc", size: 12 },
-      { key: "data/c", etag: "def", size: 0 },
-    ],
-    nextToken: "tok==",
-  });
-});
-
-test("ignore globs", () => {
-  assert.ok(globToRegExp("private").test("private/a/b.md"));
-  assert.ok(!globToRegExp("private").test("private2/a.md"));
-  assert.ok(globToRegExp("**/*.tmp").test("a/b/c.tmp"));
-  assert.ok(globToRegExp("*.tmp").test("c.tmp"));
-  assert.ok(!globToRegExp("*.tmp").test("a/c.tmp"));
-  assert.ok(globToRegExp("notes/draft-*").test("notes/draft-1.md"));
-});
-
-// --- encryption --------------------------------------------------------------
-
-const FAST: KdfParams = { name: "scrypt", N: 1024, r: 8, p: 1 };
-
-test("content round-trips and is bound to its object name", async () => {
-  const c = await Cipher.derive("pw", Buffer.from("salt"), FAST);
-  const enc = c.encryptContent(buf("hello"), 1234567890123, "name-1");
-  assert.ok(!Buffer.from(enc).includes(Buffer.from("hello")));
-  const dec = c.decryptContent(enc, "name-1");
-  assert.equal(str(dec.data), "hello");
-  assert.equal(dec.mtime, 1234567890123);
-  assert.throws(() => c.decryptContent(enc, "name-2")); // moved to another key
-  const tampered = Buffer.from(enc);
-  tampered[tampered.length - 20] ^= 1;
-  assert.throws(() => c.decryptContent(tampered.buffer.slice(0) as ArrayBuffer, "name-1"));
-  assert.equal(str(c.decryptContent(c.encryptContent(buf(""), 5, "n"), "n").data), "");
-});
-
-test("names are deterministic, opaque and unreadable with another key", async () => {
-  const c = await Cipher.derive("pw", Buffer.from("salt"), FAST);
-  const other = await Cipher.derive("pw2", Buffer.from("salt"), FAST);
-  const path = "日記/2026-11-11 メモ.md";
-  const enc = c.encryptName(path);
-  assert.equal(enc, c.encryptName(path));
-  assert.match(enc, /^[A-Za-z0-9_-]+$/);
-  assert.equal(c.decryptName(enc), path);
-  assert.equal(other.decryptName(enc), null);
-  assert.equal(c.decryptName("not-ours"), null);
-});
-
-test("nothing readable reaches the bucket", async () => {
-  const { store, a } = pair();
-  a.fs.set("secret-folder/secret-note.md", "TOP SECRET CONTENT");
-  await a.sync();
-  for (const [key, obj] of store.objects) {
-    assert.ok(!key.includes("secret"), key);
-    if (key === META_KEY) continue;
-    assert.ok(key.startsWith(DATA_PREFIX));
-    assert.ok(!Buffer.from(obj.data).includes(Buffer.from("SECRET")));
-  }
-  assert.equal(store.objects.size, 2);
-});
-
-test("a wrong password is rejected before anything is touched", async () => {
-  const store = new MemoryStore();
-  const a = new Device(store);
-  a.fs.set("a.md", "1");
-  await a.sync();
-  const intruder = new Device(store, "wrong");
-  intruder.fs.set("b.md", "2");
-  await assert.rejects(() => intruder.sync(), WrongPasswordError);
-  assert.equal(store.objects.size, 2);
-  assert.deepEqual(intruder.fs.paths(), ["b.md"]);
-});
-
-// --- planner -----------------------------------------------------------------
+import { EncryptedRemote } from "../src/encrypted-remote";
+import { Action, assessRisk, conflictPath, planSync, runSync } from "../src/sync";
+import { pair } from "./fakes";
 
 test("planner covers the three-way matrix", () => {
   const L = { mtime: 1, size: 1 };
@@ -159,14 +29,28 @@ test("planner covers the three-way matrix", () => {
   assert.equal(plan(false, false, true), "forget");
 });
 
+test("risk counts overwrites and deletions, not new files", () => {
+  const L = { mtime: 1, size: 1 };
+  const R = { etag: "e", size: 1 };
+  const actions: Action[] = [
+    { type: "upload", key: "new", local: L },
+    { type: "download", key: "new2", remote: R },
+    { type: "upload", key: "edit", local: L, remote: R },
+    { type: "download", key: "edit2", local: L, remote: R },
+    { type: "conflict", key: "c", local: L, remote: R },
+    { type: "deleteLocal", key: "d", local: L },
+    { type: "deleteRemote", key: "d2", remote: R },
+    { type: "forget", key: "f" },
+  ];
+  assert.deepEqual(assessRisk(actions, 40), { changes: 5, deletions: 2, total: 40 });
+});
+
 test("conflict copy names", () => {
   const d = new Date(2026, 10, 11, 13, 45, 0);
   assert.equal(conflictPath("a/b.md", d), "a/b (conflict 20261111-134500).md");
   assert.equal(conflictPath("a.b/noext", d), "a.b/noext (conflict 20261111-134500)");
   assert.equal(conflictPath(".hidden", d), ".hidden (conflict 20261111-134500)");
 });
-
-// --- two devices ---------------------------------------------------------------
 
 test("create, edit and delete propagate between two devices", async () => {
   const { a, b } = pair();
@@ -311,7 +195,7 @@ test("a lost upload race is retried as a conflict, not overwritten", async () =>
   b.fs.set("n.md", "from B");
   a.fs.set("n.md", "from A");
   // A lists the remote, then B uploads before A does.
-  const opened = await EncryptedRemote.open((a as any).store, "correct horse");
+  const opened = await EncryptedRemote.open(a.store, "correct horse");
   const remote = opened.remote;
   const originalList = remote.list.bind(remote);
   remote.list = async () => {
