@@ -31,6 +31,7 @@ export default class R2V2Plugin extends Plugin {
 
   private syncing = false;
   private quietUntil = 0;
+  private warnedMissingDir = false;
   private statusEl: HTMLElement | null = null;
   private intervalId: number | null = null;
   private keyCache: { key: string; cipher: Cipher } | null = null;
@@ -202,6 +203,16 @@ export default class R2V2Plugin extends Plugin {
       return;
     }
 
+    // The sync record lives in the plugin's folder. If the folder is gone (renamed or
+    // removed while Obsidian was running), every pass would look like a first sync:
+    // deletions would be undone and edits would turn into conflicts.
+    if (!this.manifest.dir || !(await this.app.vault.adapter.exists(this.manifest.dir))) {
+      this.setStatus(t("status_error"));
+      if (manual || !this.warnedMissingDir) new Notice(t("plugin_dir_missing"), 15000);
+      this.warnedMissingDir = true;
+      return;
+    }
+
     this.syncing = true;
     this.scheduleSaveSync?.cancel();
     this.setStatus(t("status_syncing"));
@@ -246,7 +257,10 @@ export default class R2V2Plugin extends Plugin {
         try {
           await this.saveState(state);
         } catch (e) {
+          // Without the record the next pass cannot tell deletions from new files.
           console.error("R2V2: could not save sync state", e);
+          this.setStatus(t("status_error"));
+          new Notice(t("state_save_failed"), 15000);
         }
       }
       this.quietUntil = Date.now() + 2000;

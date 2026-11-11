@@ -87,6 +87,10 @@ const en = {
     "Cancel if you did not change the sync target or do not expect this. Deleted local files go to the trash.",
   large_confirm: "Sync anyway",
   sync_failed: "R2V2: Sync failed — {message}",
+  state_save_failed:
+    "R2V2: The sync record could not be saved. Until this is fixed, deletions may be undone and edits may turn into conflicts. See the developer console for details.",
+  plugin_dir_missing:
+    "R2V2: The plugin's folder is missing, so nothing was synced. Reload Obsidian and enable the plugin again.",
   sync_aborted: "R2V2: Sync cancelled. Nothing was changed.",
   sync_done: "R2V2: Synced ({detail})",
   part_deleted: "deleted {n}",
@@ -198,6 +202,10 @@ const ja: Record<TextKey, string> = {
     "同期先の設定を変えた覚えがない場合や、心当たりがない場合は中止してください。削除されるローカルのファイルはゴミ箱に移されます。",
   large_confirm: "このまま同期する",
   sync_failed: "R2V2: 同期に失敗しました — {message}",
+  state_save_failed:
+    "R2V2: 同期の記録を保存できませんでした。直るまでは、削除が元に戻ったり、編集が競合になったりすることがあります。詳細は開発者コンソールにあります。",
+  plugin_dir_missing:
+    "R2V2: プラグインのフォルダが見つからないため、同期しませんでした。Obsidian を再読み込みして、プラグインを有効にし直してください。",
   sync_aborted: "R2V2: 同期を中止しました。何も変更していません。",
   sync_done: "R2V2: 同期しました({detail})",
   part_deleted: "削除 {n}",
