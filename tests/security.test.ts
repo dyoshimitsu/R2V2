@@ -264,3 +264,24 @@ test("the bucket never holds a plaintext path, content or timestamp", async () =
   assert.deepEqual(Object.keys(meta).sort(), ["check", "kdf", "salt", "version"]);
   assert.equal(Buffer.from(meta.salt, "base64").length, 16);
 });
+
+test("a remote written in a newer format is refused before anything is sent", async () => {
+  const { store, a } = pair();
+  a.fs.set("note.md", "one");
+  await a.sync();
+  const meta = JSON.parse(str(store.objects.get(META_KEY)!.data)) as RemoteMeta;
+  store.objects.set(META_KEY, { data: utf8(JSON.stringify({ ...meta, version: 2 })), etag: "newer" });
+
+  const puts = store.puts;
+  a.fs.set("second.md", "two");
+  await assert.rejects(() => a.sync(), /newer version/);
+  assert.equal(store.puts, puts);
+  assert.deepEqual(a.fs.paths(), ["note.md", "second.md"]);
+});
+
+test("content written in a newer format is rejected, not misread", async () => {
+  const c = await cipher();
+  const enc = Buffer.from(c.encryptContent(buf("x"), 1, "obj"));
+  enc[4] = 2; // format version byte
+  assert.throws(() => c.decryptContent(utf8ab(enc), "obj"));
+});
