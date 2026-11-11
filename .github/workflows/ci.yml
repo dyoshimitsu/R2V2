@@ -36,7 +36,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v7
         with:
-          name: r2v2
+          name: artoo-veetoo
           path: |
             main.js
             manifest.json

@@ -12,7 +12,7 @@ set -l root (realpath (dirname (status filename))/..)
 npm --prefix $root run --silent build; or exit 1
 
 for vault in $argv
-    set -l dest $vault/.obsidian/plugins/r2v2
+    set -l dest $vault/.obsidian/plugins/artoo-veetoo
     mkdir -p $dest; or exit 1
     cp $root/main.js $root/manifest.json $dest/; or exit 1
     echo "installed into $dest"

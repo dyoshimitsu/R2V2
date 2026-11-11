@@ -14,7 +14,7 @@ Ubuntu と Mac で同じ vault を開きたい。置き場所には Cloudflare R
 
 R2V2 は、この三つを同時に満たすための Obsidian プラグインである。vault を R2 のバケットと双方向に同期し、バケットに届くものはすべて、手元で暗号化してから送る。暗号化を切る設定はない。
 
-名前は「R2 Vault to Vault」から来ている。R2 を挟んで、vault から vault へ。
+名前は「R2 Vault to Vault」から来ている。R2 を挟んで、vault から vault へ。読みは R2-D2 のもじりで、プラグインの ID `artoo-veetoo` もそこから取った(ID に数字が使えないためである)。
 
 デスクトップ専用(Linux / macOS)。Obsidian 1.11.4 以降が必要である。
 
@@ -73,13 +73,13 @@ R2V2 が通信する相手は一つだけで、設定したアカウントの R2
 ## セットアップ
 
 1. Cloudflare のダッシュボードで R2 バケットを作り、そのバケットに対する「オブジェクトの読み取りと書き込み」権限の API トークンを発行する。アクセスキー ID とシークレットアクセスキーを控える。
-2. [Releases](https://github.com/dyoshimitsu/R2V2/releases) から `main.js` と `manifest.json` を取得し、vault の `.obsidian/plugins/r2v2/` に置く。自分でビルドする場合は次のとおり。
+2. [Releases](https://github.com/dyoshimitsu/R2V2/releases) から `main.js` と `manifest.json` を取得し、vault の `.obsidian/plugins/artoo-veetoo/` に置く。自分でビルドする場合は次のとおり。
 
    ```sh
    npm install
    npm run build
-   mkdir -p /path/to/vault/.obsidian/plugins/r2v2
-   cp main.js manifest.json /path/to/vault/.obsidian/plugins/r2v2/
+   mkdir -p /path/to/vault/.obsidian/plugins/artoo-veetoo
+   cp main.js manifest.json /path/to/vault/.obsidian/plugins/artoo-veetoo/
    ```
 
    fish を使っているなら、ビルドとコピーを `scripts/install.fish /path/to/vault` でまとめて行える。
@@ -108,7 +108,7 @@ R2V2 は端末ごとに、前回の同期が済んだ時点の記録(ローカ�
 | 削除     | 変更あり | ダウンロード(同上)             |
 | 変更あり | 変更あり | 競合                           |
 
-記録は `.obsidian/plugins/r2v2/sync-state.json` にあり、同期の対象にはならない。バケット、プレフィックス、ソルトのどれかが変わると記録は捨てられ、次の同期は初回と同じ扱いになる。
+記録は `.obsidian/plugins/artoo-veetoo/sync-state.json` にあり、同期の対象にはならない。バケット、プレフィックス、ソルトのどれかが変わると記録は捨てられ、次の同期は初回と同じ扱いになる。
 
 競合したファイルは、既定では両方残る。リモートの版が元のパスに入り、手元の版は `メモ (conflict 20261111-134500).md` のような別名になって、次の同期でもう一方の端末にも届く。設定で「更新時刻が新しい方を残す」にも変えられる。
 
@@ -191,7 +191,7 @@ npm run test:integration
 
 `master` への push と PR ごとに、GitHub Actions が次を走らせる。
 
-- 型チェック、整形の確認、単体テスト、ビルド(Ubuntu と macOS)。ビルドした `main.js` と `manifest.json` は、実行結果のページから `r2v2` という成果物として取得できる
+- 型チェック、整形の確認、単体テスト、ビルド(Ubuntu と macOS)。ビルドした `main.js` と `manifest.json` は、実行結果のページから `artoo-veetoo` という成果物として取得できる
 - SeaweedFS に対する結合テスト
 - R2 に対する結合テスト。リポジトリの変数 `R2V2_TEST_BUCKET` と、シークレット `R2V2_TEST_ACCOUNT_ID`、`R2V2_TEST_ACCESS_KEY_ID`、`R2V2_TEST_SECRET_ACCESS_KEY` を設定したときだけ動く
 
