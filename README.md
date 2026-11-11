@@ -5,7 +5,8 @@ Sync an Obsidian vault between desktops (Linux and macOS) through a Cloudflare R
 - **Account required**: you need your own Cloudflare account with an R2 bucket and an API token. R2 has a free tier; usage beyond it is billed by Cloudflare.
 - **Network use**: the plugin talks only to the S3 API endpoint of your R2 account (`https://<account-id>.r2.cloudflarestorage.com`, or the endpoint you enter) to list, upload, download and delete the encrypted copies of your files. It contacts no other service.
 - **No telemetry**, no ads, and no access to files outside the vault.
-- Desktop only. The rest of this document is in Japanese.
+- **Secrets**: the R2 secret access key and the encryption password are kept in Obsidian's secret storage, not in the plugin's `data.json`.
+- Desktop only, Obsidian 1.11.4 or later. The rest of this document is in Japanese.
 
 ---
 
@@ -15,7 +16,7 @@ R2V2 は、この三つを同時に満たすための Obsidian プラグイン�
 
 名前は「R2 Vault to Vault」から来ている。R2 を挟んで、vault から vault へ。
 
-デスクトップ専用(Linux / macOS)。
+デスクトップ専用(Linux / macOS)。Obsidian 1.11.4 以降が必要である。
 
 ## バケットには何が見えるか
 
@@ -81,7 +82,7 @@ R2V2 が通信する相手は一つだけで、設定したアカウントの R2
    cp main.js manifest.json /path/to/vault/.obsidian/plugins/r2v2/
    ```
 
-3. Obsidian の「コミュニティプラグイン」で R2V2 を有効にし、設定画面でアカウント ID、アクセスキー、バケット名、暗号化パスワードを入れる。「接続テスト」で確かめられる。
+3. Obsidian の「コミュニティプラグイン」で R2V2 を有効にし、設定画面でアカウント ID、アクセスキー ID、バケット名を入れる。シークレットアクセスキーと暗号化パスワードは、それぞれの欄で Obsidian のシークレットを新しく作って選ぶ。「接続テスト」で確かめられる。
 4. リボンの同期アイコンか、コマンド「R2V2: 今すぐ同期」で最初の同期を走らせる。
 5. もう一方の端末でも 2〜4 を行う。パスワードとプレフィックスは同じものにする。
 
@@ -123,7 +124,7 @@ R2V2 は端末ごとに、前回の同期が済んだ時点の記録(ローカ�
 | ------------------ | -------- | ------------------------------------------------------------------------------------------- |
 | アカウント ID      | —        | Cloudflare のアカウント ID。エンドポイント URL を直接入れてもよい(EU 管轄のバケットなど)    |
 | プレフィックス     | 空       | バケット内の置き場所。複数の vault を一つのバケットに置くときに分ける                       |
-| 暗号化パスワード   | —        | 必須。全端末で同じものにする                                                                |
+| 暗号化パスワード   | —        | 必須。シークレットとして保存する。全端末で同じ値にする                                      |
 | 起動時に同期       | 有効     | 起動の数秒後に 1 回                                                                         |
 | 定期同期の間隔     | 5 分     | 0 で無効                                                                                    |
 | 編集後の同期       | 30 秒    | 最後の編集からこの時間が過ぎたら同期。0 で無効                                              |
@@ -136,7 +137,7 @@ R2V2 は端末ごとに、前回の同期が済んだ時点の記録(ローカ�
 
 ## 制限
 
-- 認証情報と暗号化パスワードは、各端末の `.obsidian/plugins/r2v2/data.json` に平文で保存される。このファイルは同期されないが、vault を別の手段でバックアップ・共有している場合は含まれうる。
+- シークレットアクセスキーと暗号化パスワードは、Obsidian のシークレットストレージに保存される。vault のフォルダには書かれないので、vault を Git や別の同期手段で持ち出しても付いてこない。`data.json` に残るのはシークレットの名前だけである。ただし保存先はその端末の Obsidian のローカルストレージであり、端末に入られた場合まで守るものではない。
 - ファイルは 1 件ずつ丸ごとメモリに読んで暗号化する。巨大なファイルには向かない。
 - リネームは「削除と新規作成」として伝わる。空のフォルダは同期されない。
 - パスワードの変更には対応していない。変えるときは新しいプレフィックスへ同期し直す。

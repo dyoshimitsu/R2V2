@@ -1,14 +1,16 @@
-import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, SecretComponent, Setting } from "obsidian";
 import type R2V2Plugin from "./main";
 import { ConflictAction } from "./sync";
 
 export interface R2V2Settings {
   endpoint: string;
   accessKeyId: string;
-  secretAccessKey: string;
+  /** Name of the secret (in Obsidian's secret storage) holding the R2 secret access key. */
+  secretAccessKeySecret: string;
   bucket: string;
   prefix: string;
-  password: string;
+  /** Name of the secret holding the encryption password. */
+  passwordSecret: string;
 
   syncOnStartup: boolean;
   /** Minutes between automatic syncs; 0 disables. */
@@ -29,10 +31,10 @@ export interface R2V2Settings {
 export const DEFAULT_SETTINGS: R2V2Settings = {
   endpoint: "",
   accessKeyId: "",
-  secretAccessKey: "",
+  secretAccessKeySecret: "",
   bucket: "",
   prefix: "",
-  password: "",
+  passwordSecret: "",
   syncOnStartup: true,
   intervalMinutes: 5,
   syncOnSaveSeconds: 30,
@@ -44,13 +46,19 @@ export const DEFAULT_SETTINGS: R2V2Settings = {
   concurrency: 4,
 };
 
-export function missingSettings(s: R2V2Settings): string[] {
+/** Secret values, resolved from the secret storage at the moment they are needed. */
+export interface ResolvedSecrets {
+  secretAccessKey: string;
+  password: string;
+}
+
+export function missingSettings(s: R2V2Settings, secrets: ResolvedSecrets): string[] {
   const missing: string[] = [];
   if (!s.endpoint.trim()) missing.push("アカウント ID");
   if (!s.accessKeyId.trim()) missing.push("アクセスキー ID");
-  if (!s.secretAccessKey.trim()) missing.push("シークレットアクセスキー");
+  if (!secrets.secretAccessKey) missing.push("シークレットアクセスキー");
   if (!s.bucket.trim()) missing.push("バケット名");
-  if (!s.password) missing.push("暗号化パスワード");
+  if (!secrets.password) missing.push("暗号化パスワード");
   return missing;
 }
 
@@ -70,21 +78,32 @@ export class R2V2SettingTab extends PluginSettingTab {
     const text = (
       name: string,
       desc: string,
-      key: "endpoint" | "accessKeyId" | "secretAccessKey" | "bucket" | "prefix" | "password",
-      opts: { secret?: boolean; placeholder?: string } = {},
+      key: "endpoint" | "accessKeyId" | "bucket" | "prefix",
+      opts: { placeholder?: string } = {},
     ) =>
       new Setting(containerEl)
         .setName(name)
         .setDesc(desc)
         .addText((t) => {
-          if (opts.secret) t.inputEl.type = "password";
           t.setPlaceholder(opts.placeholder ?? "")
             .setValue(s[key])
             .onChange(async (v) => {
-              s[key] = opts.secret ? v : v.trim();
+              s[key] = v.trim();
               await this.plugin.saveSettings();
             });
         });
+
+    // The value goes into Obsidian's secret storage; the settings only keep its name.
+    const secret = (name: string, desc: string, key: "secretAccessKeySecret" | "passwordSecret") =>
+      new Setting(containerEl)
+        .setName(name)
+        .setDesc(desc)
+        .addComponent((el) =>
+          new SecretComponent(this.app, el).setValue(s[key]).onChange(async (v) => {
+            s[key] = v ?? "";
+            await this.plugin.saveSettings();
+          }),
+        );
 
     const num = (
       name: string,
@@ -116,7 +135,11 @@ export class R2V2SettingTab extends PluginSettingTab {
       },
     );
     text("アクセスキー ID", "R2 API トークンのアクセスキー ID。", "accessKeyId");
-    text("シークレットアクセスキー", "R2 API トークンのシークレット。", "secretAccessKey", { secret: true });
+    secret(
+      "シークレットアクセスキー",
+      "R2 API トークンのシークレット。Obsidian のシークレットとして保存し、ここではその名前を選ぶ。",
+      "secretAccessKeySecret",
+    );
     text("バケット名", "同期先のバケット。", "bucket");
     text(
       "プレフィックス",
@@ -143,11 +166,10 @@ export class R2V2SettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl).setName("暗号化").setHeading();
-    text(
+    secret(
       "暗号化パスワード",
-      "必須。ファイルの内容・パス・更新時刻はこのパスワードから導いた鍵で暗号化してから送る。同期する全ての端末で同じものを入れる。忘れるとリモートのデータは復号できない。",
-      "password",
-      { secret: true },
+      "必須。ファイルの内容・パス・更新時刻はこのパスワードから導いた鍵で暗号化してから送る。Obsidian のシークレットとして保存し、ここではその名前を選ぶ。同期する全ての端末で同じ値にする。忘れるとリモートのデータは復号できない。",
+      "passwordSecret",
     );
 
     new Setting(containerEl).setName("同期のタイミング").setHeading();

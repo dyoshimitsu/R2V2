@@ -5,7 +5,8 @@ import { EncryptedRemote, readMeta } from "./encrypted-remote";
 import { compileIgnore } from "./ignore";
 import { VaultFs } from "./localfs";
 import { HttpClient, R2Store, normalizePrefix, resolveEndpoint } from "./s3";
-import { DEFAULT_SETTINGS, R2V2SettingTab, R2V2Settings, missingSettings } from "./settings";
+import { migrateSecrets } from "./secrets";
+import { DEFAULT_SETTINGS, R2V2SettingTab, R2V2Settings, ResolvedSecrets, missingSettings } from "./settings";
 import { SyncState, SyncSummary, runSync } from "./sync";
 
 const STATE_FILE = "sync-state.json";
@@ -28,7 +29,11 @@ export default class R2V2Plugin extends Plugin {
   private scheduleSaveSync: ReturnType<typeof debounce> | null = null;
 
   async onload(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const data: Record<string, unknown> = (await this.loadData()) ?? {};
+    // Earlier versions kept the secret key and password in data.json itself.
+    const migrated = migrateSecrets(data, this.app.secretStorage);
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    if (migrated) await this.saveData(this.settings);
 
     this.statusEl = this.addStatusBarItem();
     this.setStatus("待機中");
@@ -49,7 +54,7 @@ export default class R2V2Plugin extends Plugin {
       this.registerEvent(this.app.vault.on("rename", onChange));
 
       this.applyTimers();
-      if (this.settings.syncOnStartup && missingSettings(this.settings).length === 0) {
+      if (this.settings.syncOnStartup && missingSettings(this.settings, this.secrets()).length === 0) {
         window.setTimeout(() => void this.sync(false), 3000);
       }
     });
@@ -86,6 +91,15 @@ export default class R2V2Plugin extends Plugin {
     this.statusEl?.setText(`R2V2: ${text}`);
   }
 
+  /** Read at the moment of use, so a secret edited in Obsidian's settings takes effect at once. */
+  private secrets(): ResolvedSecrets {
+    const get = (name: string) => (name ? (this.app.secretStorage.getSecret(name) ?? "") : "");
+    return {
+      secretAccessKey: get(this.settings.secretAccessKeySecret).trim(),
+      password: get(this.settings.passwordSecret),
+    };
+  }
+
   private store(): R2Store {
     const s = this.settings;
     return new R2Store(
@@ -93,7 +107,7 @@ export default class R2V2Plugin extends Plugin {
         endpoint: s.endpoint,
         bucket: s.bucket.trim(),
         prefix: s.prefix,
-        credentials: { accessKeyId: s.accessKeyId.trim(), secretAccessKey: s.secretAccessKey.trim() },
+        credentials: { accessKeyId: s.accessKeyId.trim(), secretAccessKey: this.secrets().secretAccessKey },
       },
       obsidianHttp,
     );
@@ -150,15 +164,16 @@ export default class R2V2Plugin extends Plugin {
   }
 
   async testConnection(): Promise<string> {
-    const missing = missingSettings(this.settings).filter((m) => m !== "暗号化パスワード");
+    const secrets = this.secrets();
+    const missing = missingSettings(this.settings, secrets).filter((m) => m !== "暗号化パスワード");
     if (missing.length) throw new Error(`未設定: ${missing.join("、")}`);
     const store = this.store();
     await store.ping();
     if (!(await readMeta(store))) {
       return "R2V2: 接続できました。リモートは未初期化で、最初の同期で暗号化の設定が作られます。";
     }
-    if (!this.settings.password) return "R2V2: 接続できました。暗号化パスワードが未設定です。";
-    const opened = await EncryptedRemote.open(store, this.settings.password, this.keyCache);
+    if (!secrets.password) return "R2V2: 接続できました。暗号化パスワードが未設定です。";
+    const opened = await EncryptedRemote.open(store, secrets.password, this.keyCache);
     this.keyCache = opened.cache;
     return "R2V2: 接続できました。パスワードも一致しています。";
   }
@@ -168,7 +183,8 @@ export default class R2V2Plugin extends Plugin {
       if (manual) new Notice("R2V2: 同期中です");
       return;
     }
-    const missing = missingSettings(this.settings);
+    const secrets = this.secrets();
+    const missing = missingSettings(this.settings, secrets);
     if (missing.length) {
       this.setStatus("未設定");
       if (manual) new Notice(`R2V2: 設定が足りません — ${missing.join("、")}`);
@@ -181,7 +197,7 @@ export default class R2V2Plugin extends Plugin {
     let state: SyncState | null = null;
     try {
       const s = this.settings;
-      const opened = await EncryptedRemote.open(this.store(), s.password, this.keyCache);
+      const opened = await EncryptedRemote.open(this.store(), secrets.password, this.keyCache);
       this.keyCache = opened.cache;
       const remote = opened.remote;
 
